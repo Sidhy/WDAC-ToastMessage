@@ -30,11 +30,11 @@ Before signing and deploying the script, set organization-specific defaults near
 - `SupportUri` — an organization-controlled HTTPS review URL.
 - `AppId` — a stable application identity, such as `Contoso.WDACToast`.
 - `DisplayName` — the notification sender shown to users.
-- `LogoPath` — optional notification image. Supply a local PNG/JPG path, a
-  `file://` URI, or an HTTPS URI. Local paths must remain readable after
-  installation; placing the image in the installation directory is recommended.
-- `ActionLabel` — caption for the support-link button (the default is
-  `View more details`).
+- `LogoPath` — notification image. By default the installer extracts the
+  Microsoft Defender shield from the built-in Windows Security application and
+  saves it under `C:\ProgramData\Company\WDACToast`. Supply another local
+  PNG/JPG path, `file://` URI, or HTTPS URI to override it, or an empty string to
+  disable the image.
 - `InstallDirectory` and `TaskName` — optional deployment-specific names.
 
 The same values can be supplied as command-line parameters during installation.
@@ -48,7 +48,6 @@ Run the single script from an elevated PowerShell session under the account that
     -AppId 'Contoso.WDACToast' `
     -DisplayName 'Contoso Security' `
     -LogoPath 'C:\Program Files\Contoso\Branding\security.png' `
-    -ActionLabel 'View block details' `
     -SupportUri 'https://support.contoso.example/wdac-review'
 ```
 
@@ -88,12 +87,19 @@ Its value query passes `Event/System/EventRecordID` to the script. The collector
 
 Known field alternatives include the spaced names used by current events (`File Name` and `Process Name`) and unspaced names found on other provider versions.
 
-The notification identifies the blocked file and the process that requested it
-(`Started by`). When the blocked file is still available, its Windows version
-metadata also supplies its description, product, publisher, and version. These
-extra values are included in the event JSON as well as the expanded toast. A
-configurable action button opens `SupportUri`, where an organization can provide
-the full event or review workflow.
+The notification explains in general terms that the application is unapproved
+or could put the device and company data at risk. It identifies both the blocked
+file and the application that requested it. When those files are still
+available, Windows version metadata supplies the description, product,
+publisher, and version for both the blocked file and its caller. The toast also
+shows the WDAC status, validated signing level, policy, and event reference when
+available.
+
+The JSON diagnostics select additional event values for support workflows:
+requested and validated signing levels, signing scenario, SHA-256/SHA-1 hashes,
+and caller metadata. `RawEventData` still contains every named value emitted by
+the installed Code Integrity provider, even when a provider version uses a field
+the script does not recognize. The **Request review** action opens `SupportUri`.
 
 Code Integrity commonly records paths in NT form, for example
 `\Device\HarddiskVolume3\Program Files\Example\app.exe`. The script uses the

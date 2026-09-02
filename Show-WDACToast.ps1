@@ -15,13 +15,10 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$DisplayName = 'Company Security',
 
-    # Optional app-logo image shown beside the notification. Both a local image
-    # path and an HTTPS URI are supported by the Windows toast schema.
+    # Defaults to a PNG extracted from the Windows Security application during
+    # installation. Supply another local path or HTTPS URI to override it.
     [AllowEmptyString()]
-    [string]$LogoPath = '',
-
-    [ValidateNotNullOrEmpty()]
-    [string]$ActionLabel = 'View more details',
+    [string]$LogoPath = "$env:ProgramData\Company\WDACToast\MicrosoftDefenderShield.png",
 
     [ValidateNotNullOrEmpty()]
     [string]$InstallDirectory = "$env:ProgramFiles\Company\WDACToast",
@@ -38,6 +35,7 @@ $StateDirectory = Join-Path $env:ProgramData 'Company\WDACToast'
 $LogDirectory = Join-Path $StateDirectory 'Logs'
 $StateFile = Join-Path $StateDirectory 'NotificationState.json'
 $InstalledScript = Join-Path $InstallDirectory 'Show-WDACToast.ps1'
+$DefaultLogoPath = Join-Path $StateDirectory 'MicrosoftDefenderShield.png'
 
 function Write-WdacToastLog {
     [CmdletBinding()]
@@ -174,6 +172,7 @@ function Install-WdacToast {
     }
 
     New-Item -Path $InstallDirectory -ItemType Directory -Force | Out-Null
+    New-Item -Path $StateDirectory -ItemType Directory -Force | Out-Null
     if (-not [string]::Equals($SourceScript, $InstalledScript, [StringComparison]::OrdinalIgnoreCase)) {
         Copy-Item -LiteralPath $SourceScript -Destination $InstalledScript -Force
     }
@@ -182,6 +181,34 @@ function Install-WdacToast {
         throw "The installed script at '$InstalledScript' does not declare the EventRecordId parameter."
     }
     Write-WdacToastLog -Message "Installed script is present at '$InstalledScript'."
+
+    if ([string]::Equals($LogoPath, $DefaultLogoPath, [StringComparison]::OrdinalIgnoreCase) -and -not (Test-Path -LiteralPath $DefaultLogoPath -PathType Leaf)) {
+        $WindowsSecurityExecutable = Join-Path $env:WINDIR 'System32\SecurityHealthSystray.exe'
+        if (Test-Path -LiteralPath $WindowsSecurityExecutable -PathType Leaf) {
+            try {
+                Add-Type -AssemblyName System.Drawing
+                $ShieldIcon = [System.Drawing.Icon]::ExtractAssociatedIcon($WindowsSecurityExecutable)
+                if ($null -ne $ShieldIcon) {
+                    $ShieldBitmap = $null
+                    try {
+                        $ShieldBitmap = $ShieldIcon.ToBitmap()
+                        $ShieldBitmap.Save($DefaultLogoPath, [System.Drawing.Imaging.ImageFormat]::Png)
+                    }
+                    finally {
+                        if ($null -ne $ShieldBitmap) { $ShieldBitmap.Dispose() }
+                        $ShieldIcon.Dispose()
+                    }
+                    Write-WdacToastLog -Message "Created the default Microsoft Defender shield image at '$DefaultLogoPath'."
+                }
+            }
+            catch {
+                Write-WdacToastLog -Level WARN -Message "Unable to create the default Microsoft Defender shield image: $($_.Exception.Message)"
+            }
+        }
+        if (-not (Test-Path -LiteralPath $DefaultLogoPath -PathType Leaf)) {
+            Write-WdacToastLog -Level WARN -Message "The Windows Security icon could not be extracted from '$WindowsSecurityExecutable'. Notifications will be shown without the default image."
+        }
+    }
 
     $AppIdRegistryPath = "HKCU:\Software\Classes\AppUserModelId\$AppId"
     New-Item -Path $AppIdRegistryPath -Force | Out-Null
@@ -195,7 +222,6 @@ function Install-WdacToast {
     $EscapedAppId = [System.Security.SecurityElement]::Escape($AppId)
     $EscapedDisplayName = [System.Security.SecurityElement]::Escape($DisplayName)
     $EscapedLogoPath = [System.Security.SecurityElement]::Escape($LogoPath)
-    $EscapedActionLabel = [System.Security.SecurityElement]::Escape($ActionLabel)
     $EscapedSupportUri = [System.Security.SecurityElement]::Escape($SupportUri)
     $EscapedInstallDirectory = [System.Security.SecurityElement]::Escape($InstallDirectory)
     $EscapedTaskName = [System.Security.SecurityElement]::Escape($TaskName)
@@ -206,7 +232,7 @@ function Install-WdacToast {
   <Triggers><EventTrigger><Enabled>true</Enabled><Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="Microsoft-Windows-CodeIntegrity/Operational"&gt;&lt;Select Path="Microsoft-Windows-CodeIntegrity/Operational"&gt;*[System[EventID=3077]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription><ValueQueries><Value name="EventRecordID">Event/System/EventRecordID</Value></ValueQueries></EventTrigger></Triggers>
   <Principals><Principal id="Author"><UserId>$EscapedUserSid</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings><MultipleInstancesPolicy>Queue</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>false</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT5M</ExecutionTimeLimit><Priority>7</Priority></Settings>
-  <Actions Context="Author"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoProfile -NonInteractive -ExecutionPolicy AllSigned -File &quot;$EscapedScript&quot; -EventRecordId &quot;`$(EventRecordID)&quot; -AppId &quot;$EscapedAppId&quot; -DisplayName &quot;$EscapedDisplayName&quot; -LogoPath &quot;$EscapedLogoPath&quot; -ActionLabel &quot;$EscapedActionLabel&quot; -SupportUri &quot;$EscapedSupportUri&quot; -InstallDirectory &quot;$EscapedInstallDirectory&quot; -TaskName &quot;$EscapedTaskName&quot;</Arguments></Exec></Actions>
+  <Actions Context="Author"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoProfile -NonInteractive -ExecutionPolicy AllSigned -File &quot;$EscapedScript&quot; -EventRecordId &quot;`$(EventRecordID)&quot; -AppId &quot;$EscapedAppId&quot; -DisplayName &quot;$EscapedDisplayName&quot; -LogoPath &quot;$EscapedLogoPath&quot; -SupportUri &quot;$EscapedSupportUri&quot; -InstallDirectory &quot;$EscapedInstallDirectory&quot; -TaskName &quot;$EscapedTaskName&quot;</Arguments></Exec></Actions>
 </Task>
 "@
 
@@ -429,6 +455,29 @@ function Show-ToastNotification {
         $ImageXml = '<image placement="appLogoOverride" hint-crop="circle" src="{0}"/>' -f [System.Security.SecurityElement]::Escape($LogoUri)
     }
 
+    $ImageXml = ''
+    if (-not [string]::IsNullOrWhiteSpace($LogoPath)) {
+        $LogoUri = $LogoPath
+        if (-not [Uri]::IsWellFormedUriString($LogoUri, [UriKind]::Absolute)) {
+            if (Test-Path -LiteralPath $LogoPath -PathType Leaf) {
+                $LogoUri = ([Uri](Resolve-Path -LiteralPath $LogoPath).Path).AbsoluteUri
+            }
+            elseif ([string]::Equals($LogoPath, $DefaultLogoPath, [StringComparison]::OrdinalIgnoreCase)) {
+                Write-WdacToastLog -Level WARN -Message "Default notification image '$DefaultLogoPath' is unavailable; continuing without an image."
+                $LogoUri = $null
+            }
+            else {
+                throw "The configured LogoPath '$LogoPath' does not exist and is not an absolute URI."
+            }
+        }
+        if ($null -ne $LogoUri -and -not ($LogoUri.StartsWith('https://', [StringComparison]::OrdinalIgnoreCase) -or $LogoUri.StartsWith('file://', [StringComparison]::OrdinalIgnoreCase))) {
+            throw 'LogoPath must be a local file path, file URI, or HTTPS URI.'
+        }
+        if ($null -ne $LogoUri) {
+            $ImageXml = '<image placement="appLogoOverride" src="{0}"/>' -f [System.Security.SecurityElement]::Escape($LogoUri)
+        }
+    }
+
     $ToastXml = '<toast><visual><binding template="ToastGeneric">{0}<text>{1}</text>{2}</binding></visual>{3}</toast>' -f
         $ImageXml, $EscapedTitle, ($TextNodes -join ''), $ActionXml
 
@@ -475,7 +524,13 @@ function Invoke-WdacToast {
     $PolicyName = Get-FirstEventValue -EventData $EventData -Names @('PolicyName', 'Policy Name', 'PolicyFriendlyName')
     $PolicyId = Get-FirstEventValue -EventData $EventData -Names @('PolicyID', 'PolicyId', 'PolicyGUID')
     $Status = Get-FirstEventValue -EventData $EventData -Names @('Status', 'ErrorCode')
+    $RequestedSigningLevel = Get-FirstEventValue -EventData $EventData -Names @('Requested Signing Level', 'RequestedSigningLevel')
+    $ValidatedSigningLevel = Get-FirstEventValue -EventData $EventData -Names @('Validated Signing Level', 'ValidatedSigningLevel')
+    $SigningScenario = Get-FirstEventValue -EventData $EventData -Names @('SI Signing Scenario', 'SigningScenario')
+    $Sha256Hash = Get-FirstEventValue -EventData $EventData -Names @('SHA256 Hash', 'SHA256Hash', 'SHA256 Flat Hash', 'SHA256FlatHash')
+    $Sha1Hash = Get-FirstEventValue -EventData $EventData -Names @('SHA1 Hash', 'SHA1Hash', 'SHA1 Flat Hash', 'SHA1FlatHash')
     $FileDetails = Get-BlockedFileDetails -Path $FilePath
+    $CallerDetails = Get-BlockedFileDetails -Path $ProcessPath
 
     $FileName = if ([string]::IsNullOrWhiteSpace($FilePath)) {
         'Unknown file'
@@ -498,9 +553,18 @@ function Invoke-WdacToast {
         ProductName = $FileDetails.Product
         FileVersion = $FileDetails.Version
         Publisher = $FileDetails.Publisher
+        CallerDescription = $CallerDetails.Description
+        CallerProductName = $CallerDetails.Product
+        CallerFileVersion = $CallerDetails.Version
+        CallerPublisher = $CallerDetails.Publisher
         PolicyName = $PolicyName
         PolicyId = $PolicyId
         Status = $Status
+        RequestedSigningLevel = $RequestedSigningLevel
+        ValidatedSigningLevel = $ValidatedSigningLevel
+        SigningScenario = $SigningScenario
+        Sha256Hash = $Sha256Hash
+        Sha1Hash = $Sha1Hash
         ActivityId = $Event.ActivityId
         ProviderName = $Event.ProviderName
         RawEventData = $EventData
@@ -523,17 +587,26 @@ function Invoke-WdacToast {
         }
     }
 
+    $CallerName = if ([string]::IsNullOrWhiteSpace($ProcessPath)) { 'Unknown application' } else { $ProcessPath -replace '^.*[\\/]', '' }
     $ToastLines = @(
+        'Security reason: This application is not approved by your organization or could put this device and company data at risk.'
         "File: $(Limit-Text -Text $FileName -MaximumLength 80)"
         "Location: $(Limit-Text -Text $FilePath -MaximumLength 130)"
     )
-    if (-not [string]::IsNullOrWhiteSpace($ProcessPath)) { $ToastLines += "Started by: $(Limit-Text -Text $ProcessPath -MaximumLength 100)" }
+    $ToastLines += "Requested by: $(Limit-Text -Text $CallerName -MaximumLength 80)"
+    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Description)) { $ToastLines += "Calling application: $(Limit-Text -Text $CallerDetails.Description -MaximumLength 100)" }
+    if (-not [string]::IsNullOrWhiteSpace($ProcessPath)) { $ToastLines += "Caller location: $(Limit-Text -Text $ProcessPath -MaximumLength 120)" }
+    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Product)) { $ToastLines += "Caller product: $(Limit-Text -Text $CallerDetails.Product -MaximumLength 100)" }
+    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Publisher)) { $ToastLines += "Caller publisher: $(Limit-Text -Text $CallerDetails.Publisher -MaximumLength 100)" }
+    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Version)) { $ToastLines += "Caller version: $(Limit-Text -Text $CallerDetails.Version -MaximumLength 60)" }
     if (-not [string]::IsNullOrWhiteSpace($FileDetails.Description)) { $ToastLines += "Description: $(Limit-Text -Text $FileDetails.Description -MaximumLength 100)" }
     if (-not [string]::IsNullOrWhiteSpace($FileDetails.Product)) { $ToastLines += "Product: $(Limit-Text -Text $FileDetails.Product -MaximumLength 100)" }
     if (-not [string]::IsNullOrWhiteSpace($FileDetails.Publisher)) { $ToastLines += "Publisher: $(Limit-Text -Text $FileDetails.Publisher -MaximumLength 100)" }
     if (-not [string]::IsNullOrWhiteSpace($FileDetails.Version)) { $ToastLines += "Version: $(Limit-Text -Text $FileDetails.Version -MaximumLength 60)" }
     if (-not [string]::IsNullOrWhiteSpace($PolicyName)) { $ToastLines += "Policy: $(Limit-Text -Text $PolicyName -MaximumLength 80)" }
     elseif (-not [string]::IsNullOrWhiteSpace($PolicyId)) { $ToastLines += "Policy: $(Limit-Text -Text $PolicyId -MaximumLength 80)" }
+    if (-not [string]::IsNullOrWhiteSpace($Status)) { $ToastLines += "Status: $(Limit-Text -Text $Status -MaximumLength 40)" }
+    if (-not [string]::IsNullOrWhiteSpace($ValidatedSigningLevel)) { $ToastLines += "Validated signing level: $(Limit-Text -Text $ValidatedSigningLevel -MaximumLength 40)" }
     $ToastLines += "Reference: WDAC-$($Event.RecordId)"
 
     Write-WdacToastLog -Message "Submitting toast to the Windows notification platform with AppId '$AppId' and $($ToastLines.Count) body line(s)."

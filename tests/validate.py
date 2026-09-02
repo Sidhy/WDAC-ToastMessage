@@ -43,7 +43,12 @@ required_collector_fragments = [
     "FileDescription = $FileDetails.Description",
     "RawFilePath = $RawFilePath",
     "placement=\"appLogoOverride\"",
-    "[string]$ActionLabel = 'View more details'",
+    "MicrosoftDefenderShield.png",
+    "SecurityHealthSystray.exe",
+    "CallerDescription = $CallerDetails.Description",
+    "RequestedSigningLevel = $RequestedSigningLevel",
+    "Sha256Hash = $Sha256Hash",
+    "Security reason: This application is not approved by your organization",
     "Write-Error -ErrorRecord $Failure",
 ]
 for fragment in required_collector_fragments:
@@ -52,6 +57,8 @@ for fragment in required_collector_fragments:
 assert "$env\\:ProgramData" not in collector
 assert "$Node.'#text'" not in collector
 assert "ExecutionPolicy Bypass" not in collector
+assert "ActionLabel" not in collector
+assert "View more details" not in collector
 assert "<MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>" in collector
 assert "Event/System/EventRecordID" in collector
 assert '`$(EventRecordID)' in collector
@@ -72,7 +79,6 @@ xml = xml.replace("$EscapedScript", r"C:\Program Files\Company\WDACToast\Show-WD
 xml = xml.replace("$EscapedAppId", "Company.WDACToast")
 xml = xml.replace("$EscapedDisplayName", "Company Security")
 xml = xml.replace("$EscapedLogoPath", r"C:\Branding\security.png")
-xml = xml.replace("$EscapedActionLabel", "View more details")
 xml = xml.replace("$EscapedSupportUri", "https://support.example.test/details")
 xml = xml.replace("$EscapedInstallDirectory", r"C:\Program Files\Company\WDACToast")
 xml = xml.replace("$EscapedTaskName", "Company WDAC Block Notification")
