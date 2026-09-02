@@ -31,7 +31,24 @@ $LogDirectory = Join-Path $StateDirectory 'Logs'
 $StateFile = Join-Path $StateDirectory 'NotificationState.json'
 $InstalledScript = Join-Path $InstallDirectory 'Show-WDACToast.ps1'
 
-New-Item -Path $LogDirectory -ItemType Directory -Force | Out-Null
+function Write-WdacToastLog {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Message,
+        [ValidateSet('INFO', 'WARN', 'ERROR')][string]$Level = 'INFO'
+    )
+
+    $Entry = '{0} [{1}] [PID:{2}] {3}' -f (Get-Date).ToUniversalTime().ToString('o'), $Level, $PID, $Message
+    try {
+        New-Item -Path $LogDirectory -ItemType Directory -Force -ErrorAction Stop | Out-Null
+        Add-Content -LiteralPath (Join-Path $LogDirectory 'WDACToast.log') -Value $Entry -Encoding UTF8 -ErrorAction Stop
+    }
+    catch {
+        # Logging must never hide the original failure. The task history still
+        # receives this fallback when ProgramData cannot be written.
+        Write-Warning "$Entry (file logging failed: $($_.Exception.Message))"
+    }
+}
 
 function Test-WdacToastInstalled {
     $AppIdRegistryPath = "HKCU:\Software\Classes\AppUserModelId\$AppId"
@@ -78,15 +95,6 @@ function Install-WdacToast {
 "@
 
     Register-ScheduledTask -TaskName $TaskName -Xml $TaskXml -Force | Out-Null
-}
-
-if (-not (Test-WdacToastInstalled)) {
-    Install-WdacToast
-}
-
-if ($EventRecordId -eq 0) {
-    Write-Output "WDAC toast notification was installed for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
-    exit 0
 }
 
 function Get-NamedEventData {
@@ -199,6 +207,26 @@ function Show-ToastNotification {
         [Parameter(Mandatory)][string[]]$Lines
     )
 
+    if ($PSVersionTable.PSEdition -ne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5) {
+        throw "Toast WinRT projection requires Windows PowerShell 5.1 (Desktop edition). Current host: $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion). Run WindowsPowerShell\v1.0\powershell.exe, not pwsh.exe."
+    }
+    if (-not [Environment]::UserInteractive) {
+        throw 'Toast notifications require an interactive user session; do not run the renderer as SYSTEM or with a non-interactive logon type.'
+    }
+
+    try {
+        [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+        [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+    }
+    catch {
+        throw "Windows toast WinRT types are unavailable. Windows 10/11 with the Windows notification platform is required. $($_.Exception.Message)"
+    }
+
+    $ToastEnabled = Get-ItemPropertyValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' -Name ToastEnabled -ErrorAction SilentlyContinue
+    if ($null -ne $ToastEnabled -and [int]$ToastEnabled -eq 0) {
+        throw 'Toast notifications are disabled for the current user (HKCU PushNotifications\ToastEnabled is 0). Enable notifications in Windows Settings or through organizational policy.'
+    }
+
     $EscapedTitle = [System.Security.SecurityElement]::Escape($Title)
     $TextNodes = foreach ($Line in $Lines) {
         '<text>{0}</text>' -f [System.Security.SecurityElement]::Escape($Line)
@@ -214,82 +242,110 @@ function Show-ToastNotification {
     $ToastXml = '<toast><visual><binding template="ToastGeneric"><text>{0}</text>{1}</binding></visual>{2}</toast>' -f
         $EscapedTitle, ($TextNodes -join ''), $ActionXml
 
-    [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
-    [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
     $Document = [Windows.Data.Xml.Dom.XmlDocument]::new()
     $Document.LoadXml($ToastXml)
     $Toast = [Windows.UI.Notifications.ToastNotification]::new($Document)
     [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($AppId).Show($Toast)
 }
 
-$XPath = "*[System[(EventID=3077) and (EventRecordID=$EventRecordId)]]"
-$Event = Get-WinEvent -LogName $LogName -FilterXPath $XPath -ErrorAction Stop |
-    Select-Object -First 1
-
-if (-not $Event) {
-    throw "WDAC Event ID 3077 with record ID $EventRecordId was not found."
-}
-
-$EventData = Get-NamedEventData -Event $Event
-$FilePath = Get-FirstEventValue -EventData $EventData -Names @('File Name', 'FileName', 'FilePath', 'ImageName', 'File')
-$ProcessPath = Get-FirstEventValue -EventData $EventData -Names @('Process Name', 'ProcessName', 'ProcessPath', 'ParentProcessName')
-$PolicyName = Get-FirstEventValue -EventData $EventData -Names @('PolicyName', 'Policy Name', 'PolicyFriendlyName')
-$PolicyId = Get-FirstEventValue -EventData $EventData -Names @('PolicyID', 'PolicyId', 'PolicyGUID')
-$Status = Get-FirstEventValue -EventData $EventData -Names @('Status', 'ErrorCode')
-
-$FileName = if ([string]::IsNullOrWhiteSpace($FilePath)) {
-    'Unknown file'
-}
-else {
-    $FilePath -replace '^.*[\\/]', ''
-}
-
-$Result = [ordered]@{
-    EventId = $Event.Id
-    EventRecordId = $Event.RecordId
-    TimeCreated = $Event.TimeCreated
-    Computer = $Event.MachineName
-    FileName = $FileName
-    FilePath = $FilePath
-    ProcessPath = $ProcessPath
-    PolicyName = $PolicyName
-    PolicyId = $PolicyId
-    Status = $Status
-    ActivityId = $Event.ActivityId
-    ProviderName = $Event.ProviderName
-    RawEventData = $EventData
-    RawEventXml = $Event.ToXml()
-}
-
-$LogFile = Join-Path $LogDirectory ('WDAC-{0}-{1}.json' -f $Event.TimeCreated.ToString('yyyyMMdd-HHmmss'), $Event.RecordId)
-$Result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LogFile -Encoding UTF8
-
-$NotificationKeySource = if ([string]::IsNullOrWhiteSpace($FilePath)) { "event-$($Event.RecordId)" } else { $FilePath.ToLowerInvariant() }
-$KeyHash = Get-StableHash -Text $NotificationKeySource
-$State = Get-NotificationState
-
-if ($DuplicateCooldownMinutes -gt 0 -and $State.ContainsKey($KeyHash)) {
-    $Elapsed = $Event.TimeCreated - [datetime]$State[$KeyHash]
-    if ($Elapsed.TotalMinutes -lt $DuplicateCooldownMinutes) {
-        Write-Verbose "Duplicate toast suppressed for $FilePath"
-        exit 0
+function Invoke-WdacToast {
+    if (-not (Test-WdacToastInstalled)) {
+        Write-WdacToastLog -Message 'Installation is incomplete; repairing the installed script, application identity, and Scheduled Task.'
+        Install-WdacToast
     }
+
+    if ($EventRecordId -eq 0) {
+        Write-WdacToastLog -Message "Installation completed for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
+        Write-Output "WDAC toast notification was installed for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
+        return
+    }
+
+    Write-WdacToastLog -Message "Processing WDAC EventRecordId $EventRecordId."
+    $XPath = "*[System[(EventID=3077) and (EventRecordID=$EventRecordId)]]"
+    $Event = Get-WinEvent -LogName $LogName -FilterXPath $XPath -ErrorAction Stop |
+        Select-Object -First 1
+
+    if (-not $Event) {
+        throw "WDAC Event ID 3077 with record ID $EventRecordId was not found."
+    }
+
+    $EventData = Get-NamedEventData -Event $Event
+    $FilePath = Get-FirstEventValue -EventData $EventData -Names @('File Name', 'FileName', 'FilePath', 'ImageName', 'File')
+    $ProcessPath = Get-FirstEventValue -EventData $EventData -Names @('Process Name', 'ProcessName', 'ProcessPath', 'ParentProcessName')
+    $PolicyName = Get-FirstEventValue -EventData $EventData -Names @('PolicyName', 'Policy Name', 'PolicyFriendlyName')
+    $PolicyId = Get-FirstEventValue -EventData $EventData -Names @('PolicyID', 'PolicyId', 'PolicyGUID')
+    $Status = Get-FirstEventValue -EventData $EventData -Names @('Status', 'ErrorCode')
+
+    $FileName = if ([string]::IsNullOrWhiteSpace($FilePath)) {
+        'Unknown file'
+    }
+    else {
+        $FilePath -replace '^.*[\\/]', ''
+    }
+
+    $Result = [ordered]@{
+        EventId = $Event.Id
+        EventRecordId = $Event.RecordId
+        TimeCreated = $Event.TimeCreated
+        Computer = $Event.MachineName
+        FileName = $FileName
+        FilePath = $FilePath
+        ProcessPath = $ProcessPath
+        PolicyName = $PolicyName
+        PolicyId = $PolicyId
+        Status = $Status
+        ActivityId = $Event.ActivityId
+        ProviderName = $Event.ProviderName
+        RawEventData = $EventData
+        RawEventXml = $Event.ToXml()
+    }
+
+    $LogFile = Join-Path $LogDirectory ('WDAC-{0}-{1}.json' -f $Event.TimeCreated.ToString('yyyyMMdd-HHmmss'), $Event.RecordId)
+    $Result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LogFile -Encoding UTF8
+
+    $NotificationKeySource = if ([string]::IsNullOrWhiteSpace($FilePath)) { "event-$($Event.RecordId)" } else { $FilePath.ToLowerInvariant() }
+    $KeyHash = Get-StableHash -Text $NotificationKeySource
+    $State = Get-NotificationState
+
+    if ($DuplicateCooldownMinutes -gt 0 -and $State.ContainsKey($KeyHash)) {
+        $Elapsed = $Event.TimeCreated - [datetime]$State[$KeyHash]
+        if ($Elapsed.TotalMinutes -lt $DuplicateCooldownMinutes) {
+            Write-Verbose "Duplicate toast suppressed for $FilePath"
+            exit 0
+        }
+    }
+
+    $ToastLines = @(
+        "File: $(Limit-Text -Text $FileName -MaximumLength 80)"
+        "Location: $(Limit-Text -Text $FilePath -MaximumLength 130)"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($ProcessPath)) { $ToastLines += "Started by: $(Limit-Text -Text $ProcessPath -MaximumLength 100)" }
+    if (-not [string]::IsNullOrWhiteSpace($PolicyName)) { $ToastLines += "Policy: $(Limit-Text -Text $PolicyName -MaximumLength 80)" }
+    elseif (-not [string]::IsNullOrWhiteSpace($PolicyId)) { $ToastLines += "Policy: $(Limit-Text -Text $PolicyId -MaximumLength 80)" }
+    $ToastLines += "Reference: WDAC-$($Event.RecordId)"
+
+    Show-ToastNotification -Title 'Application blocked by security policy' -Lines $ToastLines
+
+    $State[$KeyHash] = $Event.TimeCreated
+    $Cutoff = (Get-Date).AddDays(-7)
+    foreach ($Key in @($State.Keys)) {
+        if ([datetime]$State[$Key] -lt $Cutoff) { $State.Remove($Key) }
+    }
+    Save-NotificationState -State $State
+    Write-WdacToastLog -Message "Displayed notification for WDAC EventRecordId $EventRecordId."
 }
 
-$ToastLines = @(
-    "File: $(Limit-Text -Text $FileName -MaximumLength 80)"
-    "Location: $(Limit-Text -Text $FilePath -MaximumLength 130)"
-)
-if (-not [string]::IsNullOrWhiteSpace($ProcessPath)) { $ToastLines += "Started by: $(Limit-Text -Text $ProcessPath -MaximumLength 100)" }
-if (-not [string]::IsNullOrWhiteSpace($PolicyName)) { $ToastLines += "Policy: $(Limit-Text -Text $PolicyName -MaximumLength 80)" }
-elseif (-not [string]::IsNullOrWhiteSpace($PolicyId)) { $ToastLines += "Policy: $(Limit-Text -Text $PolicyId -MaximumLength 80)" }
-$ToastLines += "Reference: WDAC-$($Event.RecordId)"
-
-Show-ToastNotification -Title 'Application blocked by security policy' -Lines $ToastLines
-
-$State[$KeyHash] = $Event.TimeCreated
-$Cutoff = (Get-Date).AddDays(-7)
-foreach ($Key in @($State.Keys)) {
-    if ([datetime]$State[$Key] -lt $Cutoff) { $State.Remove($Key) }
+try {
+    Invoke-WdacToast
 }
-Save-NotificationState -State $State
+catch {
+    $Failure = $_
+    $Context = if ($EventRecordId -eq 0) { 'installation' } else { "EventRecordId $EventRecordId" }
+    $Details = "$Context failed: $($Failure.Exception.Message)"
+    if ($Failure.InvocationInfo -and -not [string]::IsNullOrWhiteSpace($Failure.InvocationInfo.PositionMessage)) {
+        $Details += " | $($Failure.InvocationInfo.PositionMessage -replace '[\r\n]+', ' ')"
+    }
+    Write-WdacToastLog -Level ERROR -Message $Details
+    Write-Error -ErrorRecord $Failure
+    exit 1
+}

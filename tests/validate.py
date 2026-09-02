@@ -20,6 +20,12 @@ required_collector_fragments = [
     "if (-not (Test-WdacToastInstalled))",
     "$Node.GetAttribute('Name')",
     "$Node.InnerText",
+    "function Write-WdacToastLog",
+    "$PSVersionTable.PSEdition -ne 'Desktop'",
+    "[Environment]::UserInteractive",
+    "PushNotifications' -Name ToastEnabled",
+    "Windows toast WinRT types are unavailable",
+    "Write-Error -ErrorRecord $Failure",
 ]
 for fragment in required_collector_fragments:
     assert fragment in collector, f"collector is missing {fragment!r}"
@@ -30,6 +36,8 @@ assert "ExecutionPolicy Bypass" not in collector
 assert "<MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>" in collector
 assert "Event/System/EventRecordID" in collector
 assert '`$(EventRecordID)' in collector
+assert "catch {\n    $Failure = $_" in collector
+assert "exit 1" in collector
 assert not (ROOT / "Install-WDACToast.ps1").exists()
 assert [path.name for path in ROOT.glob("*.ps1")] == ["Show-WDACToast.ps1"]
 
