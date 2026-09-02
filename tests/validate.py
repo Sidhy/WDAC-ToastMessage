@@ -37,6 +37,13 @@ required_collector_fragments = [
     "[Environment]::UserInteractive",
     "PushNotifications' -Name ToastEnabled",
     "Windows toast WinRT types are unavailable",
+    "function ConvertFrom-NtDevicePath",
+    "QueryDosDevice",
+    "function Get-BlockedFileDetails",
+    "FileDescription = $FileDetails.Description",
+    "RawFilePath = $RawFilePath",
+    "placement=\"appLogoOverride\"",
+    "[string]$ActionLabel = 'View more details'",
     "Write-Error -ErrorRecord $Failure",
 ]
 for fragment in required_collector_fragments:
@@ -63,6 +70,12 @@ xml = match.group(1)
 xml = xml.replace("$EscapedUserSid", "S-1-5-21-1")
 xml = xml.replace("$EscapedScript", r"C:\Program Files\Company\WDACToast\Show-WDACToast.ps1")
 xml = xml.replace("$EscapedAppId", "Company.WDACToast")
+xml = xml.replace("$EscapedDisplayName", "Company Security")
+xml = xml.replace("$EscapedLogoPath", r"C:\Branding\security.png")
+xml = xml.replace("$EscapedActionLabel", "View more details")
+xml = xml.replace("$EscapedSupportUri", "https://support.example.test/details")
+xml = xml.replace("$EscapedInstallDirectory", r"C:\Program Files\Company\WDACToast")
+xml = xml.replace("$EscapedTaskName", "Company WDAC Block Notification")
 xml = xml.replace("`$(EventRecordID)", "123")
 ET.fromstring(xml)
 
