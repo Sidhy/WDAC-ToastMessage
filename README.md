@@ -145,6 +145,30 @@ $recordId = Get-WinEvent -FilterHashtable @{
 & "$env:ProgramFiles\Company\WDACToast\Show-WDACToast.ps1" -EventRecordId $recordId -Verbose
 ```
 
+If PowerShell reports that `EventRecordId` is not a recognized parameter, the
+copy in Program Files predates event-record processing (or is a different
+script). Confirm which file is being invoked and inspect its declared parameters:
+
+```powershell
+$installed = "$env:ProgramFiles\Company\WDACToast\Show-WDACToast.ps1"
+(Get-Command $installed).Parameters.Keys | Sort-Object
+Get-FileHash $installed -Algorithm SHA256
+```
+
+Then run the current, signed deployment source from an elevated Windows
+PowerShell 5.1 session. This upgrades the installed copy and task; invoking the
+stale installed copy cannot update code that it does not contain:
+
+```powershell
+& 'C:\Path\To\Current\Show-WDACToast.ps1' `
+    -AppId 'Contoso.WDACToast' `
+    -DisplayName 'Contoso Security' `
+    -SupportUri 'https://support.contoso.example/wdac-review' `
+    -Verbose
+
+(Get-Command $installed).Parameters.ContainsKey('EventRecordId')
+```
+
 Validate toast branding, support-link activation, Focus Assist behavior, duplicate suppression, Fast User Switching, and task history on every supported Windows build.
 
 ### Troubleshoot missing WinRT types

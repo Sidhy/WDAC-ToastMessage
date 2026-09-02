@@ -136,8 +136,24 @@ function Test-WdacToastConfiguration {
 
 function Test-WdacToastInstalled {
     $AppIdRegistryPath = "HKCU:\Software\Classes\AppUserModelId\$AppId"
+    $SourceScript = $PSCommandPath
+    $InstalledScriptIsCurrent = Test-Path -LiteralPath $InstalledScript -PathType Leaf
+    if (
+        $InstalledScriptIsCurrent -and
+        -not [string]::IsNullOrWhiteSpace($SourceScript) -and
+        (Test-Path -LiteralPath $SourceScript -PathType Leaf) -and
+        -not [string]::Equals($SourceScript, $InstalledScript, [StringComparison]::OrdinalIgnoreCase)
+    ) {
+        $SourceHash = (Get-FileHash -LiteralPath $SourceScript -Algorithm SHA256).Hash
+        $InstalledHash = (Get-FileHash -LiteralPath $InstalledScript -Algorithm SHA256).Hash
+        $InstalledScriptIsCurrent = $SourceHash -eq $InstalledHash
+        if (-not $InstalledScriptIsCurrent) {
+            Write-WdacToastLog -Level WARN -Message "The installed script differs from the deployment source and will be upgraded. Source='$SourceScript'; Installed='$InstalledScript'."
+        }
+    }
+
     return (
-        (Test-Path -LiteralPath $InstalledScript) -and
+        $InstalledScriptIsCurrent -and
         (Test-Path -LiteralPath $AppIdRegistryPath) -and
         ($null -ne (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue))
     )

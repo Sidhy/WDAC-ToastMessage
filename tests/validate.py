@@ -16,6 +16,8 @@ required_collector_fragments = [
     "SecurityElement]::Escape",
     "BitConverter]::ToString",
     "function Test-WdacToastInstalled",
+    "$InstalledScriptIsCurrent = $SourceHash -eq $InstalledHash",
+    "The installed script differs from the deployment source and will be upgraded",
     "function Install-WdacToast",
     "$InstalledCommand.Parameters.ContainsKey('EventRecordId')",
     "An explicit installation run must always copy the invoking source",
