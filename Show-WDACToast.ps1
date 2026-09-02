@@ -153,6 +153,10 @@ function Install-WdacToast {
     if (-not [string]::Equals($SourceScript, $InstalledScript, [StringComparison]::OrdinalIgnoreCase)) {
         Copy-Item -LiteralPath $SourceScript -Destination $InstalledScript -Force
     }
+    $InstalledCommand = Get-Command -Name $InstalledScript -CommandType ExternalScript -ErrorAction Stop
+    if (-not $InstalledCommand.Parameters.ContainsKey('EventRecordId')) {
+        throw "The installed script at '$InstalledScript' does not declare the EventRecordId parameter."
+    }
     Write-WdacToastLog -Message "Installed script is present at '$InstalledScript'."
 
     $AppIdRegistryPath = "HKCU:\Software\Classes\AppUserModelId\$AppId"
@@ -337,17 +341,21 @@ function Show-ToastNotification {
 
 function Invoke-WdacToast {
     Write-WdacToastLog -Message "Invocation started with EventRecordId=$EventRecordId, AppId='$AppId', TaskName='$TaskName', InstallDirectory='$InstallDirectory'."
-    if (-not (Test-WdacToastInstalled)) {
-        Write-WdacToastLog -Level WARN -Message 'Installation is incomplete; repairing the installed script, application identity, and Scheduled Task.'
-        Install-WdacToast
-    }
-
     if ($EventRecordId -eq 0) {
+        # An explicit installation run must always copy the invoking source.
+        # Merely checking that a file exists leaves an older, incompatible copy
+        # in Program Files and causes parameter binding to fail before it can run.
+        Install-WdacToast
         [void](Test-WdacToastConfiguration)
         Write-WdacToastLog -Message "Installation completed for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
         Write-WdacToastLog -Level WARN -Message 'EventRecordId is 0, so this invocation only installed or validated the components; it did not attempt to display a toast. Pass a valid Event ID 3077 record ID to test rendering.'
         Write-Output "WDAC toast notification was installed for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
         return
+    }
+
+    if (-not (Test-WdacToastInstalled)) {
+        Write-WdacToastLog -Level WARN -Message 'Installation is incomplete; repairing the installed script, application identity, and Scheduled Task.'
+        Install-WdacToast
     }
 
     [void](Test-WdacToastConfiguration -IncludeRendererChecks)
