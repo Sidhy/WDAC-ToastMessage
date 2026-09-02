@@ -436,8 +436,23 @@ function Show-ToastNotification {
         ''
     }
     else {
-        '<actions><action content="Request review" arguments="{0}" activationType="protocol"/></actions>' -f
-            [System.Security.SecurityElement]::Escape($SupportUri)
+        '<actions><action content="{0}" arguments="{1}" activationType="protocol"/></actions>' -f
+            [System.Security.SecurityElement]::Escape($ActionLabel), [System.Security.SecurityElement]::Escape($SupportUri)
+    }
+
+    $ImageXml = ''
+    if (-not [string]::IsNullOrWhiteSpace($LogoPath)) {
+        $LogoUri = $LogoPath
+        if (-not [Uri]::IsWellFormedUriString($LogoUri, [UriKind]::Absolute)) {
+            if (-not (Test-Path -LiteralPath $LogoPath -PathType Leaf)) {
+                throw "The configured LogoPath '$LogoPath' does not exist and is not an absolute URI."
+            }
+            $LogoUri = ([Uri](Resolve-Path -LiteralPath $LogoPath).Path).AbsoluteUri
+        }
+        if (-not ($LogoUri.StartsWith('https://', [StringComparison]::OrdinalIgnoreCase) -or $LogoUri.StartsWith('file://', [StringComparison]::OrdinalIgnoreCase))) {
+            throw 'LogoPath must be a local file path, file URI, or HTTPS URI.'
+        }
+        $ImageXml = '<image placement="appLogoOverride" hint-crop="circle" src="{0}"/>' -f [System.Security.SecurityElement]::Escape($LogoUri)
     }
 
     $ImageXml = ''
