@@ -59,8 +59,11 @@ function Write-ConfigurationCheck {
     param(
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][bool]$Passed,
-        [Parameter(Mandatory)][string]$SuccessMessage,
-        [Parameter(Mandatory)][string]$FailureMessage
+        # One message is intentionally unused for each result. Allow callers to
+        # pass an empty string for that inactive branch without parameter binding
+        # failing before the check can be logged.
+        [Parameter(Mandatory)][AllowEmptyString()][string]$SuccessMessage,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$FailureMessage
     )
 
     if ($Passed) {

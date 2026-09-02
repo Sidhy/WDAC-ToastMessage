@@ -23,6 +23,8 @@ required_collector_fragments = [
     "function Write-WdacToastLog",
     "function Test-WdacToastConfiguration",
     "Configuration check [$Name] failed",
+    "[Parameter(Mandatory)][AllowEmptyString()][string]$SuccessMessage",
+    "[Parameter(Mandatory)][AllowEmptyString()][string]$FailureMessage",
     "EventRecordId is 0",
     "WpnUserService*",
     "DisableNotificationCenter",
