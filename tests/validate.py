@@ -16,6 +16,8 @@ required_collector_fragments = [
     "SecurityElement]::Escape",
     "BitConverter]::ToString",
     "function Test-WdacToastInstalled",
+    "$InstalledScriptIsCurrent = $SourceHash -eq $InstalledHash",
+    "The installed script differs from the deployment source and will be upgraded",
     "function Install-WdacToast",
     "if (-not (Test-WdacToastInstalled))",
     "$Node.GetAttribute('Name')",
