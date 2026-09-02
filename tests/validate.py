@@ -37,6 +37,18 @@ required_collector_fragments = [
     "[Environment]::UserInteractive",
     "PushNotifications' -Name ToastEnabled",
     "Windows toast WinRT types are unavailable",
+    "function ConvertFrom-NtDevicePath",
+    "QueryDosDevice",
+    "function Get-BlockedFileDetails",
+    "FileDescription = $FileDetails.Description",
+    "RawFilePath = $RawFilePath",
+    "placement=\"appLogoOverride\"",
+    "MicrosoftDefenderShield.png",
+    "SecurityHealthSystray.exe",
+    "CallerDescription = $CallerDetails.Description",
+    "RequestedSigningLevel = $RequestedSigningLevel",
+    "Sha256Hash = $Sha256Hash",
+    "Security reason: This application is not approved by your organization",
     "Write-Error -ErrorRecord $Failure",
 ]
 for fragment in required_collector_fragments:
@@ -45,6 +57,8 @@ for fragment in required_collector_fragments:
 assert "$env\\:ProgramData" not in collector
 assert "$Node.'#text'" not in collector
 assert "ExecutionPolicy Bypass" not in collector
+assert "ActionLabel" not in collector
+assert "View more details" not in collector
 assert "<MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>" in collector
 assert "Event/System/EventRecordID" in collector
 assert '`$(EventRecordID)' in collector
@@ -63,6 +77,11 @@ xml = match.group(1)
 xml = xml.replace("$EscapedUserSid", "S-1-5-21-1")
 xml = xml.replace("$EscapedScript", r"C:\Program Files\Company\WDACToast\Show-WDACToast.ps1")
 xml = xml.replace("$EscapedAppId", "Company.WDACToast")
+xml = xml.replace("$EscapedDisplayName", "Company Security")
+xml = xml.replace("$EscapedLogoPath", r"C:\Branding\security.png")
+xml = xml.replace("$EscapedSupportUri", "https://support.example.test/details")
+xml = xml.replace("$EscapedInstallDirectory", r"C:\Program Files\Company\WDACToast")
+xml = xml.replace("$EscapedTaskName", "Company WDAC Block Notification")
 xml = xml.replace("`$(EventRecordID)", "123")
 ET.fromstring(xml)
 

@@ -30,6 +30,11 @@ Before signing and deploying the script, set organization-specific defaults near
 - `SupportUri` — an organization-controlled HTTPS review URL.
 - `AppId` — a stable application identity, such as `Contoso.WDACToast`.
 - `DisplayName` — the notification sender shown to users.
+- `LogoPath` — notification image. By default the installer extracts the
+  Microsoft Defender shield from the built-in Windows Security application and
+  saves it under `C:\ProgramData\Company\WDACToast`. Supply another local
+  PNG/JPG path, `file://` URI, or HTTPS URI to override it, or an empty string to
+  disable the image.
 - `InstallDirectory` and `TaskName` — optional deployment-specific names.
 
 The same values can be supplied as command-line parameters during installation.
@@ -42,6 +47,7 @@ Run the single script from an elevated PowerShell session under the account that
 .\Show-WDACToast.ps1 `
     -AppId 'Contoso.WDACToast' `
     -DisplayName 'Contoso Security' `
+    -LogoPath 'C:\Program Files\Contoso\Branding\security.png' `
     -SupportUri 'https://support.contoso.example/wdac-review'
 ```
 
@@ -80,6 +86,28 @@ Microsoft-Windows-CodeIntegrity/Operational
 Its value query passes `Event/System/EventRecordID` to the script. The collector then uses an XPath query containing both Event ID 3077 and the supplied record ID. Event data is parsed from XML rather than localized message text.
 
 Known field alternatives include the spaced names used by current events (`File Name` and `Process Name`) and unspaced names found on other provider versions.
+
+The notification explains in general terms that the application is unapproved
+or could put the device and company data at risk. It identifies both the blocked
+file and the application that requested it. When those files are still
+available, Windows version metadata supplies the description, product,
+publisher, and version for both the blocked file and its caller. The toast also
+shows the WDAC status, validated signing level, policy, and event reference when
+available.
+
+The JSON diagnostics select additional event values for support workflows:
+requested and validated signing levels, signing scenario, SHA-256/SHA-1 hashes,
+and caller metadata. `RawEventData` still contains every named value emitted by
+the installed Code Integrity provider, even when a provider version uses a field
+the script does not recognize. The **Request review** action opens `SupportUri`.
+
+Code Integrity commonly records paths in NT form, for example
+`\Device\HarddiskVolume3\Program Files\Example\app.exe`. The script uses the
+Windows `QueryDosDevice` API to map the device prefix to the machine's real drive
+letter before showing or logging the selected path. It deliberately does not
+assume that `HarddiskVolume3` is always `C:`. If a volume has no assigned drive
+letter, the original NT path is retained. The diagnostics preserve both the
+friendly path and the original value in `RawFilePath`/`RawProcessPath`.
 
 ## Diagnostics and duplicate suppression
 
