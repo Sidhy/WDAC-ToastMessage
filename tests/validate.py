@@ -19,6 +19,8 @@ required_collector_fragments = [
     "$InstalledScriptIsCurrent = $SourceHash -eq $InstalledHash",
     "The installed script differs from the deployment source and will be upgraded",
     "function Install-WdacToast",
+    "$InstalledCommand.Parameters.ContainsKey('EventRecordId')",
+    "An explicit installation run must always copy the invoking source",
     "if (-not (Test-WdacToastInstalled))",
     "$Node.GetAttribute('Name')",
     "$Node.InnerText",
@@ -48,6 +50,10 @@ assert "Event/System/EventRecordID" in collector
 assert '`$(EventRecordID)' in collector
 assert "catch {\n    $Failure = $_" in collector
 assert "exit 1" in collector
+install_branch = collector.index("if ($EventRecordId -eq 0) {")
+repair_branch = collector.index("if (-not (Test-WdacToastInstalled))", install_branch)
+assert install_branch < repair_branch, "explicit installation must run before event-only repair"
+assert "if ($EventRecordId -eq 0) {\n        # An explicit installation run" in collector
 assert not (ROOT / "Install-WDACToast.ps1").exists()
 assert [path.name for path in ROOT.glob("*.ps1")] == ["Show-WDACToast.ps1"]
 

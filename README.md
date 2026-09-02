@@ -45,10 +45,22 @@ Run the single script from an elevated PowerShell session under the account that
     -SupportUri 'https://support.contoso.example/wdac-review'
 ```
 
-The command is idempotent. Running it again repairs missing installation components.
-It also compares the deployment source with the installed copy and replaces an
-outdated installed script before re-registering the task. Run the newly deployed
-source file—not the existing Program Files copy—when upgrading.
+The command is idempotent. Every installation run copies the invoking source over
+the Program Files copy and re-registers the components, even when they already
+exist. This is required for upgrades: run the downloaded/deployment copy above,
+not `C:\Program Files\Company\WDACToast\Show-WDACToast.ps1`, and do not pass
+`EventRecordId` during installation.
+
+After upgrading, verify that the installed file exposes the parameter before
+testing an event:
+
+```powershell
+$installed = "$env:ProgramFiles\Company\WDACToast\Show-WDACToast.ps1"
+(Get-Command -Name $installed -CommandType ExternalScript).Parameters.ContainsKey('EventRecordId')
+```
+
+The result must be `True`. If it is `False`, the file at that exact path was not
+replaced; do not retry the event command against it.
 
 The production file must be signed before installation because the Scheduled Task invokes the installed copy with `AllSigned`:
 
