@@ -100,9 +100,13 @@ function Get-NamedEventData {
     $Data = [ordered]@{}
 
     foreach ($Node in @($EventXml.Event.EventData.Data)) {
-        $Name = [string]$Node.Name
+        # Use XmlElement APIs rather than PowerShell's XML property adapter. Under
+        # StrictMode, an element containing only text does not reliably expose a
+        # synthetic '#text' property, and Name can resolve to the element name
+        # instead of the Name attribute.
+        $Name = [string]$Node.GetAttribute('Name')
         if (-not [string]::IsNullOrWhiteSpace($Name)) {
-            $Data[$Name] = [string]$Node.'#text'
+            $Data[$Name] = [string]$Node.InnerText
         }
     }
 

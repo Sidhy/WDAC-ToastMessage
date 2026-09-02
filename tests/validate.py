@@ -18,11 +18,14 @@ required_collector_fragments = [
     "function Test-WdacToastInstalled",
     "function Install-WdacToast",
     "if (-not (Test-WdacToastInstalled))",
+    "$Node.GetAttribute('Name')",
+    "$Node.InnerText",
 ]
 for fragment in required_collector_fragments:
     assert fragment in collector, f"collector is missing {fragment!r}"
 
 assert "$env\\:ProgramData" not in collector
+assert "$Node.'#text'" not in collector
 assert "ExecutionPolicy Bypass" not in collector
 assert "<MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>" in collector
 assert "Event/System/EventRecordID" in collector
