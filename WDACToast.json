@@ -1,0 +1,10 @@
+{
+  "SupportUri": "https://support.example.com/wdac-review",
+  "ActionLabel": "Request Review",
+  "AppId": "Company.WDACToast",
+  "DisplayName": "Company Security",
+  "InstallDirectory": "C:\\Program Files\\Company\\WDACToast",
+  "LogoPath": "C:\\Program Files\\Company\\WDACToast\\MicrosoftDefenderShield.png",
+  "TaskName": "Company WDAC Block Notification",
+  "DuplicateCooldownMinutes": 5
+}

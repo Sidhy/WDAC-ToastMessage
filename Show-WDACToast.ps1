@@ -10,18 +10,21 @@ param(
     [string]$SupportUri = 'https://support.example.com/wdac-review',
 
     [ValidateNotNullOrEmpty()]
+    [string]$ActionLabel = 'Request Review',
+
+    [ValidateNotNullOrEmpty()]
     [string]$AppId = 'Company.WDACToast',
 
     [ValidateNotNullOrEmpty()]
     [string]$DisplayName = 'Company Security',
 
+    [ValidateNotNullOrEmpty()]
+    [string]$InstallDirectory = "$env:ProgramFiles\Company\WDACToast",
+
     # Defaults to a PNG extracted from the Windows Security application during
     # installation. Supply another local path or HTTPS URI to override it.
     [AllowEmptyString()]
-    [string]$LogoPath = "$env:ProgramData\Company\WDACToast\MicrosoftDefenderShield.png",
-
-    [ValidateNotNullOrEmpty()]
-    [string]$InstallDirectory = "$env:ProgramFiles\Company\WDACToast",
+    [string]$LogoPath = '',
 
     [ValidateNotNullOrEmpty()]
     [string]$TaskName = 'Company WDAC Block Notification'
@@ -30,12 +33,60 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$DefaultConfiguration = [ordered]@{
+    SupportUri = 'https://support.example.com/wdac-review'
+    ActionLabel = 'Request Review'
+    AppId = 'Company.WDACToast'
+    DisplayName = 'Company Security'
+    InstallDirectory = "$env:ProgramFiles\Company\WDACToast"
+    LogoPath = $null
+    TaskName = 'Company WDAC Block Notification'
+    DuplicateCooldownMinutes = 5
+}
+$ScriptDirectory = Split-Path -Parent $PSCommandPath
+$ConfigurationFile = Join-Path $ScriptDirectory 'WDACToast.json'
+$LogoWasConfigured = $PSBoundParameters.ContainsKey('LogoPath')
+if (Test-Path -LiteralPath $ConfigurationFile -PathType Leaf) {
+    $Configuration = Get-Content -LiteralPath $ConfigurationFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    foreach ($Name in $DefaultConfiguration.Keys) {
+        $Property = $Configuration.PSObject.Properties[$Name]
+        if ($null -ne $Property -and -not $PSBoundParameters.ContainsKey($Name)) {
+            Set-Variable -Name $Name -Value $Property.Value
+            if ($Name -eq 'LogoPath') { $LogoWasConfigured = $true }
+        }
+    }
+}
+
+# Apply defaults after JSON so LogoPath can follow a configured installation
+# directory. Explicit command-line parameters always take precedence over JSON.
+foreach ($Name in $DefaultConfiguration.Keys) {
+    if (-not $PSBoundParameters.ContainsKey($Name) -and
+        -not (Test-Path -LiteralPath $ConfigurationFile -PathType Leaf)) {
+        Set-Variable -Name $Name -Value $DefaultConfiguration[$Name]
+    }
+}
+if (-not $LogoWasConfigured -and [string]::IsNullOrWhiteSpace([string]$LogoPath)) {
+    $LogoPath = Join-Path $InstallDirectory 'MicrosoftDefenderShield.png'
+}
+if ([string]::IsNullOrWhiteSpace([string]$SupportUri) -or $SupportUri -notmatch '^https://') {
+    throw "SupportUri in '$ConfigurationFile' must be an HTTPS URI."
+}
+foreach ($RequiredName in @('ActionLabel', 'AppId', 'DisplayName', 'InstallDirectory', 'TaskName')) {
+    if ([string]::IsNullOrWhiteSpace([string](Get-Variable -Name $RequiredName -ValueOnly))) {
+        throw "$RequiredName in '$ConfigurationFile' must not be empty."
+    }
+}
+if ([long]$DuplicateCooldownMinutes -lt 0 -or [long]$DuplicateCooldownMinutes -gt 1440) {
+    throw "DuplicateCooldownMinutes in '$ConfigurationFile' must be between 0 and 1440."
+}
+$DuplicateCooldownMinutes = [int]$DuplicateCooldownMinutes
+
 $LogName = 'Microsoft-Windows-CodeIntegrity/Operational'
 $StateDirectory = Join-Path $env:ProgramData 'Company\WDACToast'
 $LogDirectory = Join-Path $StateDirectory 'Logs'
 $StateFile = Join-Path $StateDirectory 'NotificationState.json'
 $InstalledScript = Join-Path $InstallDirectory 'Show-WDACToast.ps1'
-$DefaultLogoPath = Join-Path $StateDirectory 'MicrosoftDefenderShield.png'
+$DefaultLogoPath = Join-Path $InstallDirectory 'MicrosoftDefenderShield.png'
 
 function Write-WdacToastLog {
     [CmdletBinding()]
@@ -176,6 +227,13 @@ function Install-WdacToast {
     if (-not [string]::Equals($SourceScript, $InstalledScript, [StringComparison]::OrdinalIgnoreCase)) {
         Copy-Item -LiteralPath $SourceScript -Destination $InstalledScript -Force
     }
+    $InstalledConfigurationFile = Join-Path $InstallDirectory 'WDACToast.json'
+    if (Test-Path -LiteralPath $ConfigurationFile -PathType Leaf) {
+        if (-not [string]::Equals($ConfigurationFile, $InstalledConfigurationFile, [StringComparison]::OrdinalIgnoreCase)) {
+            Copy-Item -LiteralPath $ConfigurationFile -Destination $InstalledConfigurationFile -Force
+        }
+        Write-WdacToastLog -Message "Installed configuration is present at '$InstalledConfigurationFile'."
+    }
     $InstalledCommand = Get-Command -Name $InstalledScript -CommandType ExternalScript -ErrorAction Stop
     if (-not $InstalledCommand.Parameters.ContainsKey('EventRecordId')) {
         throw "The installed script at '$InstalledScript' does not declare the EventRecordId parameter."
@@ -219,12 +277,6 @@ function Install-WdacToast {
     $CurrentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $EscapedScript = [System.Security.SecurityElement]::Escape($InstalledScript)
     $EscapedUserSid = [System.Security.SecurityElement]::Escape($CurrentIdentity.User.Value)
-    $EscapedAppId = [System.Security.SecurityElement]::Escape($AppId)
-    $EscapedDisplayName = [System.Security.SecurityElement]::Escape($DisplayName)
-    $EscapedLogoPath = [System.Security.SecurityElement]::Escape($LogoPath)
-    $EscapedSupportUri = [System.Security.SecurityElement]::Escape($SupportUri)
-    $EscapedInstallDirectory = [System.Security.SecurityElement]::Escape($InstallDirectory)
-    $EscapedTaskName = [System.Security.SecurityElement]::Escape($TaskName)
     $TaskXml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -232,7 +284,7 @@ function Install-WdacToast {
   <Triggers><EventTrigger><Enabled>true</Enabled><Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="Microsoft-Windows-CodeIntegrity/Operational"&gt;&lt;Select Path="Microsoft-Windows-CodeIntegrity/Operational"&gt;*[System[EventID=3077]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription><ValueQueries><Value name="EventRecordID">Event/System/EventRecordID</Value></ValueQueries></EventTrigger></Triggers>
   <Principals><Principal id="Author"><UserId>$EscapedUserSid</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings><MultipleInstancesPolicy>Queue</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>false</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT5M</ExecutionTimeLimit><Priority>7</Priority></Settings>
-  <Actions Context="Author"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoProfile -NonInteractive -ExecutionPolicy AllSigned -File &quot;$EscapedScript&quot; -EventRecordId &quot;`$(EventRecordID)&quot; -AppId &quot;$EscapedAppId&quot; -DisplayName &quot;$EscapedDisplayName&quot; -LogoPath &quot;$EscapedLogoPath&quot; -SupportUri &quot;$EscapedSupportUri&quot; -InstallDirectory &quot;$EscapedInstallDirectory&quot; -TaskName &quot;$EscapedTaskName&quot;</Arguments></Exec></Actions>
+  <Actions Context="Author"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoProfile -NonInteractive -ExecutionPolicy AllSigned -File &quot;$EscapedScript&quot; -EventRecordId &quot;`$(EventRecordID)&quot;</Arguments></Exec></Actions>
 </Task>
 "@
 
@@ -438,21 +490,6 @@ function Show-ToastNotification {
     else {
         '<actions><action content="{0}" arguments="{1}" activationType="protocol"/></actions>' -f
             [System.Security.SecurityElement]::Escape($ActionLabel), [System.Security.SecurityElement]::Escape($SupportUri)
-    }
-
-    $ImageXml = ''
-    if (-not [string]::IsNullOrWhiteSpace($LogoPath)) {
-        $LogoUri = $LogoPath
-        if (-not [Uri]::IsWellFormedUriString($LogoUri, [UriKind]::Absolute)) {
-            if (-not (Test-Path -LiteralPath $LogoPath -PathType Leaf)) {
-                throw "The configured LogoPath '$LogoPath' does not exist and is not an absolute URI."
-            }
-            $LogoUri = ([Uri](Resolve-Path -LiteralPath $LogoPath).Path).AbsoluteUri
-        }
-        if (-not ($LogoUri.StartsWith('https://', [StringComparison]::OrdinalIgnoreCase) -or $LogoUri.StartsWith('file://', [StringComparison]::OrdinalIgnoreCase))) {
-            throw 'LogoPath must be a local file path, file URI, or HTTPS URI.'
-        }
-        $ImageXml = '<image placement="appLogoOverride" hint-crop="circle" src="{0}"/>' -f [System.Security.SecurityElement]::Escape($LogoUri)
     }
 
     $ImageXml = ''

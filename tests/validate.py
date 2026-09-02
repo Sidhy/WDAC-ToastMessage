@@ -1,10 +1,12 @@
 from pathlib import Path
+import json
 import re
 import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
 collector = (ROOT / "Show-WDACToast.ps1").read_text(encoding="utf-8")
+configuration = (ROOT / "WDACToast.json").read_text(encoding="utf-8")
 
 required_collector_fragments = [
     "[long]$EventRecordId",
@@ -44,6 +46,10 @@ required_collector_fragments = [
     "RawFilePath = $RawFilePath",
     "placement=\"appLogoOverride\"",
     "MicrosoftDefenderShield.png",
+    "[string]$ActionLabel = 'Request Review'",
+    "$ConfigurationFile = Join-Path $ScriptDirectory 'WDACToast.json'",
+    "$DefaultLogoPath = Join-Path $InstallDirectory 'MicrosoftDefenderShield.png'",
+    "Copy-Item -LiteralPath $ConfigurationFile -Destination $InstalledConfigurationFile -Force",
     "SecurityHealthSystray.exe",
     "CallerDescription = $CallerDetails.Description",
     "RequestedSigningLevel = $RequestedSigningLevel",
@@ -57,7 +63,6 @@ for fragment in required_collector_fragments:
 assert "$env\\:ProgramData" not in collector
 assert "$Node.'#text'" not in collector
 assert "ExecutionPolicy Bypass" not in collector
-assert "ActionLabel" not in collector
 assert "View more details" not in collector
 assert "<MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>" in collector
 assert "Event/System/EventRecordID" in collector
@@ -84,5 +89,10 @@ xml = xml.replace("$EscapedInstallDirectory", r"C:\Program Files\Company\WDACToa
 xml = xml.replace("$EscapedTaskName", "Company WDAC Block Notification")
 xml = xml.replace("`$(EventRecordID)", "123")
 ET.fromstring(xml)
+
+parsed_configuration = json.loads(configuration)
+assert parsed_configuration["ActionLabel"] == "Request Review"
+assert parsed_configuration["LogoPath"] == r"C:\Program Files\Company\WDACToast\MicrosoftDefenderShield.png"
+assert "ProgramData" not in parsed_configuration["LogoPath"]
 
 print("Static WDAC collector and task XML checks passed.")
