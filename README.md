@@ -115,15 +115,23 @@ Its value query passes `Event/System/EventRecordID` to the script. The collector
 
 Known field alternatives include the spaced names used by current events (`File Name` and `Process Name`) and unspaced names found on other provider versions.
 
-The notification explains in general terms that the application is unapproved
-or could put the device and company data at risk. Immediately below that message,
-`Blocked:` shows the blocked file's folder path and filename, while `Called by:`
-shows the folder path and filename of the application that initiated the action.
+The notification puts the review fields first: `FilePath` shows the blocked
+file's folder path and filename, `ProcessPath` shows the application that
+initiated the action, and `PolicyName` and `PolicyId` are shown as separate
+fields. These four fields are always included, even if an event does not provide
+a value, so a shared notification has a consistent review format. The remaining
+text explains in general terms that the application is unapproved or could put
+the device and company data at risk.
 When those files are still
 available, Windows version metadata supplies the description, product,
 publisher, and version for both the blocked file and its caller. The toast also
 shows the WDAC status, validated signing level, policy, and event reference when
 available.
+
+The notification does not apply application-side maximum lengths to event
+values. It passes complete, XML-escaped values to wrapped adaptive text nodes so
+the notification platform receives the full details. Windows still controls the
+visual size and collapsed or expanded presentation of a toast.
 
 The JSON diagnostics select additional event values for support workflows:
 requested and validated signing levels, signing scenario, SHA-256/SHA-1 hashes,

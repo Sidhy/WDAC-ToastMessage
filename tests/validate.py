@@ -55,8 +55,11 @@ required_collector_fragments = [
     "RequestedSigningLevel = $RequestedSigningLevel",
     "Sha256Hash = $Sha256Hash",
     "Security reason: This application is not approved by your organization",
-    '"Blocked: $(Limit-Text -Text $FilePath -MaximumLength 260)"',
-    '"Called by: $(Limit-Text -Text $ProcessPath -MaximumLength 260)"',
+    '"FilePath: $FilePath"',
+    '"ProcessPath: $ProcessPath"',
+    '"PolicyName: $PolicyName"',
+    '"PolicyId: $PolicyId"',
+    '<text hint-wrap="true">{0}</text>',
     "Write-Error -ErrorRecord $Failure",
 ]
 for fragment in required_collector_fragments:
@@ -70,6 +73,8 @@ assert '"File: $(Limit-Text' not in collector
 assert '"Location: $(Limit-Text' not in collector
 assert '"Requested by: $(Limit-Text' not in collector
 assert '"Caller location: $(Limit-Text' not in collector
+assert "function Limit-Text" not in collector
+assert "MaximumLength" not in collector
 assert "<MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>" in collector
 assert "Event/System/EventRecordID" in collector
 assert '`$(EventRecordID)' in collector
