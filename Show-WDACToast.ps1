@@ -39,6 +39,10 @@ function Write-WdacToastLog {
     )
 
     $Entry = '{0} [{1}] [PID:{2}] {3}' -f (Get-Date).ToUniversalTime().ToString('o'), $Level, $PID, $Message
+    Write-Verbose $Entry
+    if ($Level -eq 'WARN') {
+        Write-Warning $Message
+    }
     try {
         New-Item -Path $LogDirectory -ItemType Directory -Force -ErrorAction Stop | Out-Null
         Add-Content -LiteralPath (Join-Path $LogDirectory 'WDACToast.log') -Value $Entry -Encoding UTF8 -ErrorAction Stop
@@ -48,6 +52,83 @@ function Write-WdacToastLog {
         # receives this fallback when ProgramData cannot be written.
         Write-Warning "$Entry (file logging failed: $($_.Exception.Message))"
     }
+}
+
+function Write-ConfigurationCheck {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][bool]$Passed,
+        [Parameter(Mandatory)][string]$SuccessMessage,
+        [Parameter(Mandatory)][string]$FailureMessage
+    )
+
+    if ($Passed) {
+        Write-WdacToastLog -Message "Configuration check [$Name] passed: $SuccessMessage"
+    }
+    else {
+        Write-WdacToastLog -Level WARN -Message "Configuration check [$Name] failed: $FailureMessage"
+    }
+    return $Passed
+}
+
+function Test-WdacToastConfiguration {
+    [CmdletBinding()]
+    param([switch]$IncludeRendererChecks)
+
+    Write-WdacToastLog -Message "Starting configuration checks. Host=$($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion); User=$([System.Security.Principal.WindowsIdentity]::GetCurrent().Name); Interactive=$([Environment]::UserInteractive)."
+    $Results = [System.Collections.Generic.List[bool]]::new()
+    $AppIdRegistryPath = "HKCU:\Software\Classes\AppUserModelId\$AppId"
+    $RegistryValues = Get-ItemProperty -LiteralPath $AppIdRegistryPath -ErrorAction SilentlyContinue
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+
+    $Results.Add((Write-ConfigurationCheck -Name 'Installed script' -Passed (Test-Path -LiteralPath $InstalledScript -PathType Leaf) -SuccessMessage $InstalledScript -FailureMessage "The installed script is missing at '$InstalledScript'."))
+    $Results.Add((Write-ConfigurationCheck -Name 'Application identity' -Passed ($null -ne $RegistryValues) -SuccessMessage $AppIdRegistryPath -FailureMessage "The per-user AppUserModelID '$AppId' is not registered at '$AppIdRegistryPath'."))
+    if ($null -ne $RegistryValues) {
+        $RegisteredDisplayName = if ($RegistryValues.PSObject.Properties['DisplayName']) { [string]$RegistryValues.DisplayName } else { $null }
+        $RegisteredShowInSettings = if ($RegistryValues.PSObject.Properties['ShowInSettings']) { $RegistryValues.ShowInSettings } else { $null }
+        $Results.Add((Write-ConfigurationCheck -Name 'Application display name' -Passed ($RegisteredDisplayName -eq $DisplayName) -SuccessMessage "DisplayName is '$DisplayName'." -FailureMessage "Expected DisplayName '$DisplayName', found '$RegisteredDisplayName'."))
+        $Results.Add((Write-ConfigurationCheck -Name 'Application notification settings' -Passed ($null -ne $RegisteredShowInSettings -and [int]$RegisteredShowInSettings -eq 1) -SuccessMessage 'ShowInSettings is enabled.' -FailureMessage "ShowInSettings should be 1, found '$RegisteredShowInSettings'."))
+    }
+
+    $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task' -Passed ($null -ne $Task) -SuccessMessage "Task '$TaskName' exists." -FailureMessage "Task '$TaskName' does not exist for this user."))
+    if ($null -ne $Task) {
+        $ExpectedSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $TaskAction = @($Task.Actions) | Select-Object -First 1
+        $TaskExecute = if ($null -ne $TaskAction) { [string]$TaskAction.Execute } else { '' }
+        $TaskArguments = if ($null -ne $TaskAction) { [string]$TaskAction.Arguments } else { '' }
+        $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task state' -Passed ($Task.State -ne 'Disabled') -SuccessMessage "Task state is $($Task.State)." -FailureMessage 'The task is disabled.'))
+        $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task user' -Passed ($Task.Principal.UserId -eq $ExpectedSid -and $Task.Principal.LogonType -eq 'InteractiveToken') -SuccessMessage "Task uses InteractiveToken for SID $ExpectedSid." -FailureMessage "Expected InteractiveToken for SID $ExpectedSid; found LogonType '$($Task.Principal.LogonType)' and UserId '$($Task.Principal.UserId)'."))
+        $ActionIsValid = $null -ne $TaskAction -and $TaskExecute -like '*\WindowsPowerShell\v1.0\powershell.exe' -and $TaskArguments -like "*${InstalledScript}*" -and $TaskArguments -like '*-ExecutionPolicy AllSigned*'
+        $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task action' -Passed $ActionIsValid -SuccessMessage "Task launches Windows PowerShell 5.1 with AllSigned and '$InstalledScript'." -FailureMessage "The task action is unexpected. Execute='$TaskExecute'; Arguments='$TaskArguments'."))
+    }
+
+    $EventLog = Get-WinEvent -ListLog $LogName -ErrorAction SilentlyContinue
+    $Results.Add((Write-ConfigurationCheck -Name 'Code Integrity event log' -Passed ($null -ne $EventLog -and $EventLog.IsEnabled) -SuccessMessage "'$LogName' is available and enabled." -FailureMessage "'$LogName' is unavailable or disabled in the current context."))
+    if ($SupportUri -eq 'https://support.example.com/wdac-review') {
+        $Results.Add((Write-ConfigurationCheck -Name 'Support URI' -Passed $false -SuccessMessage '' -FailureMessage "The placeholder SupportUri '$SupportUri' is still configured; replace it with your organization's HTTPS review URL."))
+    }
+    else {
+        $Results.Add((Write-ConfigurationCheck -Name 'Support URI' -Passed $true -SuccessMessage $SupportUri -FailureMessage ''))
+    }
+
+    if ($IncludeRendererChecks) {
+        $IsWindowsPowerShell = $PSVersionTable.PSEdition -eq 'Desktop' -and $PSVersionTable.PSVersion.Major -eq 5
+        $Results.Add((Write-ConfigurationCheck -Name 'PowerShell host' -Passed $IsWindowsPowerShell -SuccessMessage 'Windows PowerShell 5.1 is in use.' -FailureMessage "Rendering requires Windows PowerShell 5.1; current host is $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion)."))
+        $Results.Add((Write-ConfigurationCheck -Name 'Interactive session' -Passed ([Environment]::UserInteractive) -SuccessMessage 'The current process has an interactive user session.' -FailureMessage 'The process is not in an interactive user session, so Windows cannot display its toast.'))
+
+        $ToastEnabled = Get-ItemPropertyValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' -Name ToastEnabled -ErrorAction SilentlyContinue
+        $Results.Add((Write-ConfigurationCheck -Name 'User notification preference' -Passed ($null -eq $ToastEnabled -or [int]$ToastEnabled -ne 0) -SuccessMessage "ToastEnabled is not disabled (value: '$ToastEnabled')." -FailureMessage 'HKCU PushNotifications\ToastEnabled is 0. Enable notifications for this user.'))
+        $PolicyDisabled = Get-ItemPropertyValue -Path 'HKCU:\Software\Policies\Microsoft\Windows\Explorer' -Name DisableNotificationCenter -ErrorAction SilentlyContinue
+        $Results.Add((Write-ConfigurationCheck -Name 'Notification policy' -Passed ($null -eq $PolicyDisabled -or [int]$PolicyDisabled -ne 1) -SuccessMessage "DisableNotificationCenter is not enabled (value: '$PolicyDisabled')." -FailureMessage 'User policy DisableNotificationCenter is 1; an administrator must change the policy before toasts can appear.'))
+        $PushServices = @(Get-Service -Name 'WpnUserService*' -ErrorAction SilentlyContinue)
+        $RunningPushService = @($PushServices | Where-Object Status -eq 'Running').Count -gt 0
+        $Results.Add((Write-ConfigurationCheck -Name 'Push notification service' -Passed $RunningPushService -SuccessMessage "A WpnUserService instance is running." -FailureMessage "No running WpnUserService instance was found (found $($PushServices.Count) instance(s))."))
+    }
+
+    $FailedCount = @($Results | Where-Object { -not $_ }).Count
+    Write-WdacToastLog -Message "Configuration checks completed: $($Results.Count - $FailedCount) passed, $FailedCount warning(s)."
+    return $FailedCount -eq 0
 }
 
 function Test-WdacToastInstalled {
@@ -69,11 +150,13 @@ function Install-WdacToast {
     if (-not [string]::Equals($SourceScript, $InstalledScript, [StringComparison]::OrdinalIgnoreCase)) {
         Copy-Item -LiteralPath $SourceScript -Destination $InstalledScript -Force
     }
+    Write-WdacToastLog -Message "Installed script is present at '$InstalledScript'."
 
     $AppIdRegistryPath = "HKCU:\Software\Classes\AppUserModelId\$AppId"
     New-Item -Path $AppIdRegistryPath -Force | Out-Null
     New-ItemProperty -Path $AppIdRegistryPath -Name DisplayName -Value $DisplayName -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $AppIdRegistryPath -Name ShowInSettings -Value 1 -PropertyType DWord -Force | Out-Null
+    Write-WdacToastLog -Message "Registered AppUserModelID '$AppId' for the current user with display name '$DisplayName'."
 
     $CurrentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $EscapedScript = [System.Security.SecurityElement]::Escape($InstalledScript)
@@ -95,6 +178,7 @@ function Install-WdacToast {
 "@
 
     Register-ScheduledTask -TaskName $TaskName -Xml $TaskXml -Force | Out-Null
+    Write-WdacToastLog -Message "Registered Scheduled Task '$TaskName' for SID $($CurrentIdentity.User.Value)."
 }
 
 function Get-NamedEventData {
@@ -249,17 +333,21 @@ function Show-ToastNotification {
 }
 
 function Invoke-WdacToast {
+    Write-WdacToastLog -Message "Invocation started with EventRecordId=$EventRecordId, AppId='$AppId', TaskName='$TaskName', InstallDirectory='$InstallDirectory'."
     if (-not (Test-WdacToastInstalled)) {
-        Write-WdacToastLog -Message 'Installation is incomplete; repairing the installed script, application identity, and Scheduled Task.'
+        Write-WdacToastLog -Level WARN -Message 'Installation is incomplete; repairing the installed script, application identity, and Scheduled Task.'
         Install-WdacToast
     }
 
     if ($EventRecordId -eq 0) {
+        [void](Test-WdacToastConfiguration)
         Write-WdacToastLog -Message "Installation completed for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
+        Write-WdacToastLog -Level WARN -Message 'EventRecordId is 0, so this invocation only installed or validated the components; it did not attempt to display a toast. Pass a valid Event ID 3077 record ID to test rendering.'
         Write-Output "WDAC toast notification was installed for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
         return
     }
 
+    [void](Test-WdacToastConfiguration -IncludeRendererChecks)
     Write-WdacToastLog -Message "Processing WDAC EventRecordId $EventRecordId."
     $XPath = "*[System[(EventID=3077) and (EventRecordID=$EventRecordId)]]"
     $Event = Get-WinEvent -LogName $LogName -FilterXPath $XPath -ErrorAction Stop |
@@ -302,6 +390,7 @@ function Invoke-WdacToast {
 
     $LogFile = Join-Path $LogDirectory ('WDAC-{0}-{1}.json' -f $Event.TimeCreated.ToString('yyyyMMdd-HHmmss'), $Event.RecordId)
     $Result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LogFile -Encoding UTF8
+    Write-WdacToastLog -Message "Wrote event diagnostics to '$LogFile'. Parsed FilePath='$FilePath'; ProcessPath='$ProcessPath'; PolicyName='$PolicyName'; PolicyId='$PolicyId'; Status='$Status'."
 
     $NotificationKeySource = if ([string]::IsNullOrWhiteSpace($FilePath)) { "event-$($Event.RecordId)" } else { $FilePath.ToLowerInvariant() }
     $KeyHash = Get-StableHash -Text $NotificationKeySource
@@ -310,7 +399,7 @@ function Invoke-WdacToast {
     if ($DuplicateCooldownMinutes -gt 0 -and $State.ContainsKey($KeyHash)) {
         $Elapsed = $Event.TimeCreated - [datetime]$State[$KeyHash]
         if ($Elapsed.TotalMinutes -lt $DuplicateCooldownMinutes) {
-            Write-Verbose "Duplicate toast suppressed for $FilePath"
+            Write-WdacToastLog -Level WARN -Message "Duplicate toast suppressed for '$FilePath'; elapsed $([math]::Round($Elapsed.TotalMinutes, 2)) minute(s), cooldown $DuplicateCooldownMinutes minute(s). The event JSON was still written."
             exit 0
         }
     }
@@ -324,7 +413,9 @@ function Invoke-WdacToast {
     elseif (-not [string]::IsNullOrWhiteSpace($PolicyId)) { $ToastLines += "Policy: $(Limit-Text -Text $PolicyId -MaximumLength 80)" }
     $ToastLines += "Reference: WDAC-$($Event.RecordId)"
 
+    Write-WdacToastLog -Message "Submitting toast to the Windows notification platform with AppId '$AppId' and $($ToastLines.Count) body line(s)."
     Show-ToastNotification -Title 'Application blocked by security policy' -Lines $ToastLines
+    Write-WdacToastLog -Message 'The Windows notification platform accepted the toast. Windows can still suppress its presentation because of Do Not Disturb/Focus Assist or per-app notification settings.'
 
     $State[$KeyHash] = $Event.TimeCreated
     $Cutoff = (Get-Date).AddDays(-7)

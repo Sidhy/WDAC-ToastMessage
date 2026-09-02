@@ -82,6 +82,17 @@ Operational activity and caught errors are appended to:
 C:\ProgramData\Company\WDACToast\Logs\WDACToast.log
 ```
 
+Every invocation now logs its parameters and execution stages. Configuration checks report the installed script, per-user AppUserModelID values, Scheduled Task state/user/action, Code Integrity log, support URI, Windows PowerShell host, interactive session, notification preference and policy, and push-notification service. Passing `-Verbose` mirrors all `INFO` entries to the console; failed checks and duplicate suppression are both written to the file and shown as PowerShell warnings.
+
+If the command reports installation success but no toast, check the warning immediately above it. An unset or empty `$recordId` converts to the default `EventRecordId` value of `0`; that mode only installs and validates the components. Confirm the value before invoking the script:
+
+```powershell
+$recordId
+if ($recordId -le 0) { throw 'No WDAC Event ID 3077 record was found.' }
+```
+
+After a rendering attempt, the log explicitly distinguishes submission to the Windows notification platform from actual on-screen presentation. Windows may accept a toast and still hide it because of Do Not Disturb/Focus Assist or per-application notification settings.
+
 The top-level error handler logs the failing installation or event-record context, exception message, and PowerShell source position, writes the original error to the Scheduled Task history, and exits with code `1`. If the log directory itself cannot be written, logging falls back to a warning without masking the original error.
 
 Notifications for the same lowercase file path are suppressed for five minutes by default. Every underlying event is still logged. Use `-DuplicateCooldownMinutes 0` to disable suppression or supply a value up to 1440 minutes.
