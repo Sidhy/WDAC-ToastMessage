@@ -15,6 +15,8 @@ The installation check runs on every invocation. If an invocation detects a miss
 
 - Windows 10 or Windows 11.
 - Windows PowerShell 5.1.
+- An interactive user session with the Windows Push Notifications user service available. Do not invoke the renderer with PowerShell 7 (`pwsh.exe`) or as SYSTEM: PowerShell 7 does not provide the Windows PowerShell 5.1 WinRT type projection used by `Windows.UI.Notifications`.
+- Notifications enabled for the user in Windows Settings (and not disabled by organizational policy). The script reports an explicit error when `HKCU\Software\Microsoft\Windows\CurrentVersion\PushNotifications\ToastEnabled` is present and set to `0`; it does not override that preference or policy.
 - Permission to read `Microsoft-Windows-CodeIntegrity/Operational` in the target user context.
 - Administrator rights for the initial installation under Program Files.
 - A code-signed production script permitted by the deployed WDAC policy. The Scheduled Task uses `-ExecutionPolicy AllSigned`.
@@ -74,6 +76,14 @@ C:\ProgramData\Company\WDACToast\Logs\WDAC-<timestamp>-<record-id>.json
 
 The JSON includes selected fields, all named `EventData` values, and the complete event XML. Treat this directory as security-relevant data and apply an ACL appropriate to the deployment.
 
+Operational activity and caught errors are appended to:
+
+```text
+C:\ProgramData\Company\WDACToast\Logs\WDACToast.log
+```
+
+The top-level error handler logs the failing installation or event-record context, exception message, and PowerShell source position, writes the original error to the Scheduled Task history, and exits with code `1`. If the log directory itself cannot be written, logging falls back to a warning without masking the original error.
+
 Notifications for the same lowercase file path are suppressed for five minutes by default. Every underlying event is still logged. Use `-DuplicateCooldownMinutes 0` to disable suppression or supply a value up to 1440 minutes.
 
 ## Security properties
@@ -110,5 +120,20 @@ $recordId = Get-WinEvent -FilterHashtable @{
 ```
 
 Validate toast branding, support-link activation, Focus Assist behavior, duplicate suppression, Fast User Switching, and task history on every supported Windows build.
+
+### Troubleshoot missing WinRT types
+
+If the log reports `Unable to find type [Windows.UI.Notifications...]`, first verify the actual host and user context used for that invocation:
+
+```powershell
+$PSVersionTable | Select-Object PSEdition, PSVersion
+[Environment]::UserInteractive
+Get-Service -Name 'WpnUserService*'
+Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' -Name ToastEnabled -ErrorAction SilentlyContinue
+```
+
+The installed task deliberately launches 64-bit Windows PowerShell 5.1 and uses `InteractiveToken`. A manual test launched in PowerShell 7 can therefore fail even though the task configuration is correct. Re-run it with `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` in the affected user's signed-in session. Windows Server Core and other systems without the Windows notification platform are not supported.
+
+For comparison, the referenced [Toast Notification Script](https://github.com/imabdk/Toast-Notification-Script/blob/master/Remediate-ToastNotification.ps1) checks the workstation OS, the current user's push-notification setting, user context, application registration, and the notification service before loading the same WinRT types. This project keeps only the prerequisites relevant to its narrower WDAC renderer: the installer owns its per-user AppUserModelID, the task owns the interactive Windows PowerShell host, and the renderer validates its host, session, user preference, and WinRT availability. It intentionally does **not** enable notifications, restart services, or change enterprise-managed settings on the user's behalf.
 
 If users cannot read the event log, use a separate protected SYSTEM collector and a per-user renderer. Secure that handoff so standard users cannot inject notification text or actions.
