@@ -25,19 +25,47 @@ The task runs with `InteractiveToken`, so it is registered separately for each u
 
 ## Configure
 
-Before signing and deploying the script, set organization-specific defaults near the beginning of `Show-WDACToast.ps1`:
+Configuration is read from `WDACToast.json` beside `Show-WDACToast.ps1`. During
+installation, the JSON file is copied beside the installed script under
+`C:\Program Files\Company\WDACToast`. The Scheduled Task supplies only the event
+record ID, so subsequent edits to the installed JSON take effect on its next
+invocation. If the file is absent, the built-in defaults are used. Explicit
+command-line parameters override JSON values.
+
+Edit the supplied JSON before deployment:
+
+```json
+{
+  "SupportUri": "https://support.contoso.example/wdac-review",
+  "ActionLabel": "Request Review",
+  "AppId": "Contoso.WDACToast",
+  "DisplayName": "Contoso Security",
+  "InstallDirectory": "C:\\Program Files\\Company\\WDACToast",
+  "LogoPath": "C:\\Program Files\\Company\\WDACToast\\MicrosoftDefenderShield.png",
+  "TaskName": "Company WDAC Block Notification",
+  "DuplicateCooldownMinutes": 5
+}
+```
+
+Available settings are:
 
 - `SupportUri` — an organization-controlled HTTPS review URL.
+- `ActionLabel` — text for the action that opens `SupportUri`; the default is
+  **Request Review**.
 - `AppId` — a stable application identity, such as `Contoso.WDACToast`.
 - `DisplayName` — the notification sender shown to users.
 - `LogoPath` — notification image. By default the installer extracts the
   Microsoft Defender shield from the built-in Windows Security application and
-  saves it under `C:\ProgramData\Company\WDACToast`. Supply another local
+  saves it beside the installed script under
+  `C:\Program Files\Company\WDACToast`. Supply another local
   PNG/JPG path, `file://` URI, or HTTPS URI to override it, or an empty string to
   disable the image.
 - `InstallDirectory` and `TaskName` — optional deployment-specific names.
 
-The same values can be supplied as command-line parameters during installation.
+`C:\ProgramData\Company\WDACToast` is reserved for mutable notification state,
+operational logs, and per-event JSON diagnostics; it no longer stores branding
+assets. The same values can be supplied as command-line parameters during
+installation.
 
 ## Install
 
