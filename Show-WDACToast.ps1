@@ -338,21 +338,6 @@ function Get-FirstEventValue {
     return $null
 }
 
-function Limit-Text {
-    [CmdletBinding()]
-    param(
-        [AllowNull()]
-        [string]$Text,
-
-        [ValidateRange(4, 1000)]
-        [int]$MaximumLength = 140
-    )
-
-    if ([string]::IsNullOrWhiteSpace($Text)) { return 'Unknown' }
-    if ($Text.Length -le $MaximumLength) { return $Text }
-    return $Text.Substring(0, $MaximumLength - 3) + '...'
-}
-
 function ConvertFrom-NtDevicePath {
     [CmdletBinding()]
     param([AllowNull()][string]$Path)
@@ -482,7 +467,9 @@ function Show-ToastNotification {
 
     $EscapedTitle = [System.Security.SecurityElement]::Escape($Title)
     $TextNodes = foreach ($Line in $Lines) {
-        '<text>{0}</text>' -f [System.Security.SecurityElement]::Escape($Line)
+        # Pass complete values to wrapped adaptive text nodes. Applying a
+        # character limit here permanently removes review details.
+        '<text hint-wrap="true">{0}</text>' -f [System.Security.SecurityElement]::Escape($Line)
     }
     $ActionXml = if ([string]::IsNullOrWhiteSpace($SupportUri)) {
         ''
@@ -625,22 +612,22 @@ function Invoke-WdacToast {
     }
 
     $ToastLines = @(
+        "FilePath: $FilePath"
+        "ProcessPath: $ProcessPath"
+        "PolicyName: $PolicyName"
+        "PolicyId: $PolicyId"
         'Security reason: This application is not approved by your organization or could put this device and company data at risk.'
-        "Blocked: $(Limit-Text -Text $FilePath -MaximumLength 260)"
-        "Called by: $(Limit-Text -Text $ProcessPath -MaximumLength 260)"
     )
-    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Description)) { $ToastLines += "Calling application: $(Limit-Text -Text $CallerDetails.Description -MaximumLength 100)" }
-    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Product)) { $ToastLines += "Caller product: $(Limit-Text -Text $CallerDetails.Product -MaximumLength 100)" }
-    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Publisher)) { $ToastLines += "Caller publisher: $(Limit-Text -Text $CallerDetails.Publisher -MaximumLength 100)" }
-    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Version)) { $ToastLines += "Caller version: $(Limit-Text -Text $CallerDetails.Version -MaximumLength 60)" }
-    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Description)) { $ToastLines += "Description: $(Limit-Text -Text $FileDetails.Description -MaximumLength 100)" }
-    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Product)) { $ToastLines += "Product: $(Limit-Text -Text $FileDetails.Product -MaximumLength 100)" }
-    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Publisher)) { $ToastLines += "Publisher: $(Limit-Text -Text $FileDetails.Publisher -MaximumLength 100)" }
-    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Version)) { $ToastLines += "Version: $(Limit-Text -Text $FileDetails.Version -MaximumLength 60)" }
-    if (-not [string]::IsNullOrWhiteSpace($PolicyName)) { $ToastLines += "Policy: $(Limit-Text -Text $PolicyName -MaximumLength 80)" }
-    elseif (-not [string]::IsNullOrWhiteSpace($PolicyId)) { $ToastLines += "Policy: $(Limit-Text -Text $PolicyId -MaximumLength 80)" }
-    if (-not [string]::IsNullOrWhiteSpace($Status)) { $ToastLines += "Status: $(Limit-Text -Text $Status -MaximumLength 40)" }
-    if (-not [string]::IsNullOrWhiteSpace($ValidatedSigningLevel)) { $ToastLines += "Validated signing level: $(Limit-Text -Text $ValidatedSigningLevel -MaximumLength 40)" }
+    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Description)) { $ToastLines += "Calling application: $($CallerDetails.Description)" }
+    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Product)) { $ToastLines += "Caller product: $($CallerDetails.Product)" }
+    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Publisher)) { $ToastLines += "Caller publisher: $($CallerDetails.Publisher)" }
+    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Version)) { $ToastLines += "Caller version: $($CallerDetails.Version)" }
+    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Description)) { $ToastLines += "Description: $($FileDetails.Description)" }
+    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Product)) { $ToastLines += "Product: $($FileDetails.Product)" }
+    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Publisher)) { $ToastLines += "Publisher: $($FileDetails.Publisher)" }
+    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Version)) { $ToastLines += "Version: $($FileDetails.Version)" }
+    if (-not [string]::IsNullOrWhiteSpace($Status)) { $ToastLines += "Status: $Status" }
+    if (-not [string]::IsNullOrWhiteSpace($ValidatedSigningLevel)) { $ToastLines += "Validated signing level: $ValidatedSigningLevel" }
     $ToastLines += "Reference: WDAC-$($Event.RecordId)"
 
     Write-WdacToastLog -Message "Submitting toast to the Windows notification platform with AppId '$AppId' and $($ToastLines.Count) body line(s)."
