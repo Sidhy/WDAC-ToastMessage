@@ -116,8 +116,10 @@ Its value query passes `Event/System/EventRecordID` to the script. The collector
 Known field alternatives include the spaced names used by current events (`File Name` and `Process Name`) and unspaced names found on other provider versions.
 
 The notification explains in general terms that the application is unapproved
-or could put the device and company data at risk. It identifies both the blocked
-file and the application that requested it. When those files are still
+or could put the device and company data at risk. Immediately below that message,
+`Blocked:` shows the blocked file's folder path and filename, while `Called by:`
+shows the folder path and filename of the application that initiated the action.
+When those files are still
 available, Windows version metadata supplies the description, product,
 publisher, and version for both the blocked file and its caller. The toast also
 shows the WDAC status, validated signing level, policy, and event reference when

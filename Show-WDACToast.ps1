@@ -624,15 +624,12 @@ function Invoke-WdacToast {
         }
     }
 
-    $CallerName = if ([string]::IsNullOrWhiteSpace($ProcessPath)) { 'Unknown application' } else { $ProcessPath -replace '^.*[\\/]', '' }
     $ToastLines = @(
         'Security reason: This application is not approved by your organization or could put this device and company data at risk.'
-        "File: $(Limit-Text -Text $FileName -MaximumLength 80)"
-        "Location: $(Limit-Text -Text $FilePath -MaximumLength 130)"
+        "Blocked: $(Limit-Text -Text $FilePath -MaximumLength 260)"
+        "Called by: $(Limit-Text -Text $ProcessPath -MaximumLength 260)"
     )
-    $ToastLines += "Requested by: $(Limit-Text -Text $CallerName -MaximumLength 80)"
     if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Description)) { $ToastLines += "Calling application: $(Limit-Text -Text $CallerDetails.Description -MaximumLength 100)" }
-    if (-not [string]::IsNullOrWhiteSpace($ProcessPath)) { $ToastLines += "Caller location: $(Limit-Text -Text $ProcessPath -MaximumLength 120)" }
     if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Product)) { $ToastLines += "Caller product: $(Limit-Text -Text $CallerDetails.Product -MaximumLength 100)" }
     if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Publisher)) { $ToastLines += "Caller publisher: $(Limit-Text -Text $CallerDetails.Publisher -MaximumLength 100)" }
     if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Version)) { $ToastLines += "Caller version: $(Limit-Text -Text $CallerDetails.Version -MaximumLength 60)" }
