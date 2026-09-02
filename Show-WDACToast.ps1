@@ -15,6 +15,14 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$DisplayName = 'Company Security',
 
+    # Optional app-logo image shown beside the notification. Both a local image
+    # path and an HTTPS URI are supported by the Windows toast schema.
+    [AllowEmptyString()]
+    [string]$LogoPath = '',
+
+    [ValidateNotNullOrEmpty()]
+    [string]$ActionLabel = 'View more details',
+
     [ValidateNotNullOrEmpty()]
     [string]$InstallDirectory = "$env:ProgramFiles\Company\WDACToast",
 
@@ -186,6 +194,8 @@ function Install-WdacToast {
     $EscapedUserSid = [System.Security.SecurityElement]::Escape($CurrentIdentity.User.Value)
     $EscapedAppId = [System.Security.SecurityElement]::Escape($AppId)
     $EscapedDisplayName = [System.Security.SecurityElement]::Escape($DisplayName)
+    $EscapedLogoPath = [System.Security.SecurityElement]::Escape($LogoPath)
+    $EscapedActionLabel = [System.Security.SecurityElement]::Escape($ActionLabel)
     $EscapedSupportUri = [System.Security.SecurityElement]::Escape($SupportUri)
     $EscapedInstallDirectory = [System.Security.SecurityElement]::Escape($InstallDirectory)
     $EscapedTaskName = [System.Security.SecurityElement]::Escape($TaskName)
@@ -196,7 +206,7 @@ function Install-WdacToast {
   <Triggers><EventTrigger><Enabled>true</Enabled><Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="Microsoft-Windows-CodeIntegrity/Operational"&gt;&lt;Select Path="Microsoft-Windows-CodeIntegrity/Operational"&gt;*[System[EventID=3077]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription><ValueQueries><Value name="EventRecordID">Event/System/EventRecordID</Value></ValueQueries></EventTrigger></Triggers>
   <Principals><Principal id="Author"><UserId>$EscapedUserSid</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings><MultipleInstancesPolicy>Queue</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>false</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT5M</ExecutionTimeLimit><Priority>7</Priority></Settings>
-  <Actions Context="Author"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoProfile -NonInteractive -ExecutionPolicy AllSigned -File &quot;$EscapedScript&quot; -EventRecordId &quot;`$(EventRecordID)&quot; -AppId &quot;$EscapedAppId&quot; -DisplayName &quot;$EscapedDisplayName&quot; -SupportUri &quot;$EscapedSupportUri&quot; -InstallDirectory &quot;$EscapedInstallDirectory&quot; -TaskName &quot;$EscapedTaskName&quot;</Arguments></Exec></Actions>
+  <Actions Context="Author"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoProfile -NonInteractive -ExecutionPolicy AllSigned -File &quot;$EscapedScript&quot; -EventRecordId &quot;`$(EventRecordID)&quot; -AppId &quot;$EscapedAppId&quot; -DisplayName &quot;$EscapedDisplayName&quot; -LogoPath &quot;$EscapedLogoPath&quot; -ActionLabel &quot;$EscapedActionLabel&quot; -SupportUri &quot;$EscapedSupportUri&quot; -InstallDirectory &quot;$EscapedInstallDirectory&quot; -TaskName &quot;$EscapedTaskName&quot;</Arguments></Exec></Actions>
 </Task>
 "@
 
@@ -263,6 +273,64 @@ function Limit-Text {
     if ([string]::IsNullOrWhiteSpace($Text)) { return 'Unknown' }
     if ($Text.Length -le $MaximumLength) { return $Text }
     return $Text.Substring(0, $MaximumLength - 3) + '...'
+}
+
+function ConvertFrom-NtDevicePath {
+    [CmdletBinding()]
+    param([AllowNull()][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or $Path -notmatch '^\\Device\\HarddiskVolume\d+(?:\\|$)') {
+        return $Path
+    }
+
+    # QueryDosDevice is the Windows-supported mapping between an NT device name
+    # (as recorded by Code Integrity) and its DOS drive letter. This avoids
+    # guessing that HarddiskVolume3 is C:, which is not portable between PCs.
+    if (-not ('WdacToast.NativeMethods' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace WdacToast {
+    public static class NativeMethods {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern uint QueryDosDevice(string deviceName, StringBuilder targetPath, int maxLength);
+    }
+}
+'@
+    }
+
+    foreach ($Letter in [char[]](67..90)) {
+        $Drive = "$Letter`:"
+        $Target = [System.Text.StringBuilder]::new(1024)
+        if ([WdacToast.NativeMethods]::QueryDosDevice($Drive, $Target, $Target.Capacity) -gt 0) {
+            $DevicePath = ($Target.ToString() -split [char]0)[0]
+            if ($Path.Equals($DevicePath, [StringComparison]::OrdinalIgnoreCase)) { return $Drive }
+            if ($Path.StartsWith("$DevicePath\", [StringComparison]::OrdinalIgnoreCase)) {
+                return $Drive + $Path.Substring($DevicePath.Length)
+            }
+        }
+    }
+
+    return $Path
+}
+
+function Get-BlockedFileDetails {
+    [CmdletBinding()]
+    param([AllowNull()][string]$Path)
+
+    $Details = [ordered]@{ Description = $null; Product = $null; Version = $null; Publisher = $null }
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $Details }
+
+    $Item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if ($null -ne $Item) {
+        $VersionInfo = $Item.VersionInfo
+        $Details.Description = $VersionInfo.FileDescription
+        $Details.Product = $VersionInfo.ProductName
+        $Details.Version = $VersionInfo.FileVersion
+        $Details.Publisher = $VersionInfo.CompanyName
+    }
+    return $Details
 }
 
 function Get-NotificationState {
@@ -342,12 +410,27 @@ function Show-ToastNotification {
         ''
     }
     else {
-        '<actions><action content="Request review" arguments="{0}" activationType="protocol"/></actions>' -f
-            [System.Security.SecurityElement]::Escape($SupportUri)
+        '<actions><action content="{0}" arguments="{1}" activationType="protocol"/></actions>' -f
+            [System.Security.SecurityElement]::Escape($ActionLabel), [System.Security.SecurityElement]::Escape($SupportUri)
     }
 
-    $ToastXml = '<toast><visual><binding template="ToastGeneric"><text>{0}</text>{1}</binding></visual>{2}</toast>' -f
-        $EscapedTitle, ($TextNodes -join ''), $ActionXml
+    $ImageXml = ''
+    if (-not [string]::IsNullOrWhiteSpace($LogoPath)) {
+        $LogoUri = $LogoPath
+        if (-not [Uri]::IsWellFormedUriString($LogoUri, [UriKind]::Absolute)) {
+            if (-not (Test-Path -LiteralPath $LogoPath -PathType Leaf)) {
+                throw "The configured LogoPath '$LogoPath' does not exist and is not an absolute URI."
+            }
+            $LogoUri = ([Uri](Resolve-Path -LiteralPath $LogoPath).Path).AbsoluteUri
+        }
+        if (-not ($LogoUri.StartsWith('https://', [StringComparison]::OrdinalIgnoreCase) -or $LogoUri.StartsWith('file://', [StringComparison]::OrdinalIgnoreCase))) {
+            throw 'LogoPath must be a local file path, file URI, or HTTPS URI.'
+        }
+        $ImageXml = '<image placement="appLogoOverride" hint-crop="circle" src="{0}"/>' -f [System.Security.SecurityElement]::Escape($LogoUri)
+    }
+
+    $ToastXml = '<toast><visual><binding template="ToastGeneric">{0}<text>{1}</text>{2}</binding></visual>{3}</toast>' -f
+        $ImageXml, $EscapedTitle, ($TextNodes -join ''), $ActionXml
 
     $Document = [Windows.Data.Xml.Dom.XmlDocument]::new()
     $Document.LoadXml($ToastXml)
@@ -385,11 +468,14 @@ function Invoke-WdacToast {
     }
 
     $EventData = Get-NamedEventData -Event $Event
-    $FilePath = Get-FirstEventValue -EventData $EventData -Names @('File Name', 'FileName', 'FilePath', 'ImageName', 'File')
-    $ProcessPath = Get-FirstEventValue -EventData $EventData -Names @('Process Name', 'ProcessName', 'ProcessPath', 'ParentProcessName')
+    $RawFilePath = Get-FirstEventValue -EventData $EventData -Names @('File Name', 'FileName', 'FilePath', 'ImageName', 'File')
+    $RawProcessPath = Get-FirstEventValue -EventData $EventData -Names @('Process Name', 'ProcessName', 'ProcessPath', 'ParentProcessName')
+    $FilePath = ConvertFrom-NtDevicePath -Path $RawFilePath
+    $ProcessPath = ConvertFrom-NtDevicePath -Path $RawProcessPath
     $PolicyName = Get-FirstEventValue -EventData $EventData -Names @('PolicyName', 'Policy Name', 'PolicyFriendlyName')
     $PolicyId = Get-FirstEventValue -EventData $EventData -Names @('PolicyID', 'PolicyId', 'PolicyGUID')
     $Status = Get-FirstEventValue -EventData $EventData -Names @('Status', 'ErrorCode')
+    $FileDetails = Get-BlockedFileDetails -Path $FilePath
 
     $FileName = if ([string]::IsNullOrWhiteSpace($FilePath)) {
         'Unknown file'
@@ -406,6 +492,12 @@ function Invoke-WdacToast {
         FileName = $FileName
         FilePath = $FilePath
         ProcessPath = $ProcessPath
+        RawFilePath = $RawFilePath
+        RawProcessPath = $RawProcessPath
+        FileDescription = $FileDetails.Description
+        ProductName = $FileDetails.Product
+        FileVersion = $FileDetails.Version
+        Publisher = $FileDetails.Publisher
         PolicyName = $PolicyName
         PolicyId = $PolicyId
         Status = $Status
@@ -436,6 +528,10 @@ function Invoke-WdacToast {
         "Location: $(Limit-Text -Text $FilePath -MaximumLength 130)"
     )
     if (-not [string]::IsNullOrWhiteSpace($ProcessPath)) { $ToastLines += "Started by: $(Limit-Text -Text $ProcessPath -MaximumLength 100)" }
+    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Description)) { $ToastLines += "Description: $(Limit-Text -Text $FileDetails.Description -MaximumLength 100)" }
+    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Product)) { $ToastLines += "Product: $(Limit-Text -Text $FileDetails.Product -MaximumLength 100)" }
+    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Publisher)) { $ToastLines += "Publisher: $(Limit-Text -Text $FileDetails.Publisher -MaximumLength 100)" }
+    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Version)) { $ToastLines += "Version: $(Limit-Text -Text $FileDetails.Version -MaximumLength 60)" }
     if (-not [string]::IsNullOrWhiteSpace($PolicyName)) { $ToastLines += "Policy: $(Limit-Text -Text $PolicyName -MaximumLength 80)" }
     elseif (-not [string]::IsNullOrWhiteSpace($PolicyId)) { $ToastLines += "Policy: $(Limit-Text -Text $PolicyId -MaximumLength 80)" }
     $ToastLines += "Reference: WDAC-$($Event.RecordId)"

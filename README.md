@@ -30,6 +30,11 @@ Before signing and deploying the script, set organization-specific defaults near
 - `SupportUri` — an organization-controlled HTTPS review URL.
 - `AppId` — a stable application identity, such as `Contoso.WDACToast`.
 - `DisplayName` — the notification sender shown to users.
+- `LogoPath` — optional notification image. Supply a local PNG/JPG path, a
+  `file://` URI, or an HTTPS URI. Local paths must remain readable after
+  installation; placing the image in the installation directory is recommended.
+- `ActionLabel` — caption for the support-link button (the default is
+  `View more details`).
 - `InstallDirectory` and `TaskName` — optional deployment-specific names.
 
 The same values can be supplied as command-line parameters during installation.
@@ -42,6 +47,8 @@ Run the single script from an elevated PowerShell session under the account that
 .\Show-WDACToast.ps1 `
     -AppId 'Contoso.WDACToast' `
     -DisplayName 'Contoso Security' `
+    -LogoPath 'C:\Program Files\Contoso\Branding\security.png' `
+    -ActionLabel 'View block details' `
     -SupportUri 'https://support.contoso.example/wdac-review'
 ```
 
@@ -80,6 +87,21 @@ Microsoft-Windows-CodeIntegrity/Operational
 Its value query passes `Event/System/EventRecordID` to the script. The collector then uses an XPath query containing both Event ID 3077 and the supplied record ID. Event data is parsed from XML rather than localized message text.
 
 Known field alternatives include the spaced names used by current events (`File Name` and `Process Name`) and unspaced names found on other provider versions.
+
+The notification identifies the blocked file and the process that requested it
+(`Started by`). When the blocked file is still available, its Windows version
+metadata also supplies its description, product, publisher, and version. These
+extra values are included in the event JSON as well as the expanded toast. A
+configurable action button opens `SupportUri`, where an organization can provide
+the full event or review workflow.
+
+Code Integrity commonly records paths in NT form, for example
+`\Device\HarddiskVolume3\Program Files\Example\app.exe`. The script uses the
+Windows `QueryDosDevice` API to map the device prefix to the machine's real drive
+letter before showing or logging the selected path. It deliberately does not
+assume that `HarddiskVolume3` is always `C:`. If a volume has no assigned drive
+letter, the original NT path is retained. The diagnostics preserve both the
+friendly path and the original value in `RawFilePath`/`RawProcessPath`.
 
 ## Diagnostics and duplicate suppression
 
