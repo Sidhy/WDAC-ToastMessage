@@ -6,7 +6,7 @@
 
 The script has two entry paths:
 
-1. When run without an event record ID, it installs itself under `C:\Program Files\Company\WDACToast`, registers a custom toast application identity, and creates an event-triggered Scheduled Task for the current user.
+1. When run without an event record ID, it installs itself under `C:\Program Files\Company\WDACToast`, identifies the user who owns Explorer in the current Windows session, registers that user's custom toast application identity, and creates an event-triggered Scheduled Task for that user.
 2. When the Scheduled Task supplies an `EventRecordId`, the installed script retrieves that exact Event ID 3077 record, writes complete diagnostics, applies duplicate suppression, and displays the toast.
 
 The installation check runs on every invocation. If an invocation detects a missing installation file, application identity registration, or Scheduled Task registration, it recreates the missing components before processing an event.
@@ -21,7 +21,7 @@ The installation check runs on every invocation. If an invocation detects a miss
 - Administrator rights for the initial installation under Program Files.
 - A code-signed production script permitted by the deployed WDAC policy. The Scheduled Task uses `-ExecutionPolicy AllSigned`.
 
-The task runs with `InteractiveToken`, so it is registered separately for each user who should see notifications. A SYSTEM task cannot display a toast directly in an interactive user's session.
+The task runs with `InteractiveToken` and `LeastPrivilege`, so it is registered separately for each user who should see notifications. If installation is elevated with a different administrator account, the installer deliberately uses the owner of `explorer.exe` in the same session—not the administrator identity. Installation stops rather than accidentally creating an administrator or SYSTEM task when no logged-on Explorer user can be found. A SYSTEM task cannot display a toast directly in an interactive user's session.
 
 ## Configure
 
@@ -64,12 +64,19 @@ Available settings are:
 
 `C:\ProgramData\Company\WDACToast` is reserved for mutable notification state,
 operational logs, and per-event JSON diagnostics; it no longer stores branding
-assets. The same values can be supplied as command-line parameters during
+assets. During installation, the script grants the well-known **Authenticated
+Users** SID `Modify` permission on this directory, its log directory, and their
+descendants. Consequently, a directory first created by an elevated installer
+does not prevent standard-user task instances from updating state or writing
+logs. The same values can be supplied as command-line parameters during
 installation.
 
 ## Install
 
-Run the single script from an elevated PowerShell session under the account that should receive notifications:
+Run the single script from an elevated PowerShell session in the same Windows
+session as the signed-in user who should receive notifications. The elevation
+may use a separate administrator credential; task ownership is taken from that
+session's Explorer shell:
 
 ```powershell
 .\Show-WDACToast.ps1 `
@@ -78,6 +85,12 @@ Run the single script from an elevated PowerShell session under the account that
     -LogoPath 'C:\Program Files\Contoso\Branding\security.png' `
     -SupportUri 'https://support.contoso.example/wdac-review'
 ```
+
+Run the installation once in each concurrently signed-in user's session when
+Fast User Switching or multiple RDP sessions are in use. A Scheduled Task has a
+fixed user principal; it cannot dynamically switch principals between sessions.
+Using a distinct `TaskName` per user prevents one registration from replacing
+another if multiple users need notifications on the same device.
 
 The command is idempotent. Every installation run copies the invoking source over
 the Program Files copy and re-registers the components, even when they already
