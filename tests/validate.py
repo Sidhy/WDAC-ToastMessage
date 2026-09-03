@@ -35,6 +35,11 @@ required_collector_fragments = [
     "$Node.InnerText",
     "function Write-WdacToastLog",
     "function Test-WdacToastConfiguration",
+    "function Get-OptionalRegistryValue",
+    "$Item.PSObject.Properties[$Name]",
+    "function Reset-WdacToastInstallation",
+    "Unregister-ScheduledTask",
+    "ResetInstallation cannot be combined with EventRecordId",
     "Configuration check [$Name] failed",
     "[Parameter(Mandatory)][AllowEmptyString()][string]$SuccessMessage",
     "[Parameter(Mandatory)][AllowEmptyString()][string]$FailureMessage",
@@ -75,6 +80,7 @@ for fragment in required_collector_fragments:
 assert "$env\\:ProgramData" not in collector
 assert "$Node.'#text'" not in collector
 assert "ExecutionPolicy Bypass" not in collector
+assert not re.search(r"\bGet-ItemPropertyValue\s+-", collector)
 assert "View more details" not in collector
 assert '"File: $(Limit-Text' not in collector
 assert '"Location: $(Limit-Text' not in collector

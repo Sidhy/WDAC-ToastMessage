@@ -27,7 +27,12 @@ param(
     [string]$LogoPath = '',
 
     [ValidateNotNullOrEmpty()]
-    [string]$TaskName = 'Company WDAC Block Notification'
+    [string]$TaskName = 'Company WDAC Block Notification',
+
+    # Removes the existing per-user registration, installed files, and mutable
+    # state before installing the deployment copy again. This is intentionally
+    # valid only for an installation invocation (EventRecordId 0).
+    [switch]$ResetInstallation
 )
 
 Set-StrictMode -Version Latest
@@ -175,6 +180,23 @@ function Write-ConfigurationCheck {
     return $Passed
 }
 
+function Get-OptionalRegistryValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    # Get-ItemPropertyValue can emit PSArgumentException when the key exists but
+    # the requested value does not. A missing preference/policy means "not
+    # configured" and must not terminate the renderer under ErrorAction Stop.
+    $Item = Get-ItemProperty -LiteralPath $Path -ErrorAction SilentlyContinue
+    if ($null -eq $Item) { return $null }
+    $Property = $Item.PSObject.Properties[$Name]
+    if ($null -eq $Property) { return $null }
+    return $Property.Value
+}
+
 function Test-WdacToastConfiguration {
     [CmdletBinding()]
     param([switch]$IncludeRendererChecks)
@@ -221,9 +243,9 @@ function Test-WdacToastConfiguration {
         $Results.Add((Write-ConfigurationCheck -Name 'PowerShell host' -Passed $IsWindowsPowerShell -SuccessMessage 'Windows PowerShell 5.1 is in use.' -FailureMessage "Rendering requires Windows PowerShell 5.1; current host is $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion)."))
         $Results.Add((Write-ConfigurationCheck -Name 'Interactive session' -Passed ([Environment]::UserInteractive) -SuccessMessage 'The current process has an interactive user session.' -FailureMessage 'The process is not in an interactive user session, so Windows cannot display its toast.'))
 
-        $ToastEnabled = Get-ItemPropertyValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' -Name ToastEnabled -ErrorAction SilentlyContinue
+        $ToastEnabled = Get-OptionalRegistryValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' -Name ToastEnabled
         $Results.Add((Write-ConfigurationCheck -Name 'User notification preference' -Passed ($null -eq $ToastEnabled -or [int]$ToastEnabled -ne 0) -SuccessMessage "ToastEnabled is not disabled (value: '$ToastEnabled')." -FailureMessage 'HKCU PushNotifications\ToastEnabled is 0. Enable notifications for this user.'))
-        $PolicyDisabled = Get-ItemPropertyValue -Path 'HKCU:\Software\Policies\Microsoft\Windows\Explorer' -Name DisableNotificationCenter -ErrorAction SilentlyContinue
+        $PolicyDisabled = Get-OptionalRegistryValue -Path 'HKCU:\Software\Policies\Microsoft\Windows\Explorer' -Name DisableNotificationCenter
         $Results.Add((Write-ConfigurationCheck -Name 'Notification policy' -Passed ($null -eq $PolicyDisabled -or [int]$PolicyDisabled -ne 1) -SuccessMessage "DisableNotificationCenter is not enabled (value: '$PolicyDisabled')." -FailureMessage 'User policy DisableNotificationCenter is 1; an administrator must change the policy before toasts can appear.'))
         $PushServices = @(Get-Service -Name 'WpnUserService*' -ErrorAction SilentlyContinue)
         $RunningPushService = @($PushServices | Where-Object Status -eq 'Running').Count -gt 0
@@ -334,6 +356,41 @@ function Install-WdacToast {
 
     Register-ScheduledTask -TaskName $TaskName -Xml $TaskXml -Force | Out-Null
     Write-WdacToastLog -Message "Registered Scheduled Task '$TaskName' with InteractiveToken and least privilege for interactive user '$($TaskUser.Name)' (SID $($TaskUser.Sid))."
+}
+
+function Reset-WdacToastInstallation {
+    if ([string]::Equals($PSCommandPath, $InstalledScript, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "ResetInstallation must be run from the new deployment copy, not '$InstalledScript'."
+    }
+    $TaskUser = Get-InteractiveUserIdentity
+    $Registrations = @([pscustomobject]@{ AppId = $AppId; TaskName = $TaskName })
+    $InstalledConfigurationFile = Join-Path $InstallDirectory 'WDACToast.json'
+
+    # Also remove names recorded by the previous installation. This prevents an
+    # AppId or TaskName rename in a new package from leaving an orphaned task or
+    # notification sender behind.
+    if (Test-Path -LiteralPath $InstalledConfigurationFile -PathType Leaf) {
+        try {
+            $Previous = Get-Content -LiteralPath $InstalledConfigurationFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if (-not [string]::IsNullOrWhiteSpace([string]$Previous.AppId) -and
+                -not [string]::IsNullOrWhiteSpace([string]$Previous.TaskName)) {
+                $Registrations += [pscustomobject]@{ AppId = [string]$Previous.AppId; TaskName = [string]$Previous.TaskName }
+            }
+        }
+        catch {
+            Write-WdacToastLog -Level WARN -Message "Could not read the previous configuration during reset; current configured names will still be removed. $($_.Exception.Message)"
+        }
+    }
+
+    foreach ($Registration in $Registrations) {
+        Unregister-ScheduledTask -TaskName $Registration.TaskName -Confirm:$false -ErrorAction SilentlyContinue
+        $RegistrationPath = "Registry::HKEY_USERS\$($TaskUser.Sid)\Software\Classes\AppUserModelId\$($Registration.AppId)"
+        Remove-Item -LiteralPath $RegistrationPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $StateDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    Write-WdacToastLog -Message "Reset the WDAC toast installation for interactive user '$($TaskUser.Name)' (SID $($TaskUser.Sid))."
 }
 
 function Get-NamedEventData {
@@ -504,7 +561,7 @@ function Show-ToastNotification {
         throw "Windows toast WinRT types are unavailable. Windows 10/11 with the Windows notification platform is required. $($_.Exception.Message)"
     }
 
-    $ToastEnabled = Get-ItemPropertyValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' -Name ToastEnabled -ErrorAction SilentlyContinue
+    $ToastEnabled = Get-OptionalRegistryValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' -Name ToastEnabled
     if ($null -ne $ToastEnabled -and [int]$ToastEnabled -eq 0) {
         throw 'Toast notifications are disabled for the current user (HKCU PushNotifications\ToastEnabled is 0). Enable notifications in Windows Settings or through organizational policy.'
     }
@@ -556,11 +613,15 @@ function Show-ToastNotification {
 }
 
 function Invoke-WdacToast {
-    Write-WdacToastLog -Message "Invocation started with EventRecordId=$EventRecordId, AppId='$AppId', TaskName='$TaskName', InstallDirectory='$InstallDirectory'."
+    Write-WdacToastLog -Message "Invocation started with EventRecordId=$EventRecordId, ResetInstallation=$ResetInstallation, AppId='$AppId', TaskName='$TaskName', InstallDirectory='$InstallDirectory'."
+    if ($ResetInstallation -and $EventRecordId -ne 0) {
+        throw 'ResetInstallation cannot be combined with EventRecordId. Run reset as a separate elevated installation command.'
+    }
     if ($EventRecordId -eq 0) {
         # An explicit installation run must always copy the invoking source.
         # Merely checking that a file exists leaves an older, incompatible copy
         # in Program Files and causes parameter binding to fail before it can run.
+        if ($ResetInstallation) { Reset-WdacToastInstallation }
         Install-WdacToast
         [void](Test-WdacToastConfiguration)
         Write-WdacToastLog -Message "Installation completed for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
