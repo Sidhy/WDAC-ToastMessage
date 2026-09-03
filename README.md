@@ -98,6 +98,29 @@ exist. This is required for upgrades: run the downloaded/deployment copy above,
 not `C:\Program Files\Company\WDACToast\Show-WDACToast.ps1`, and do not pass
 `EventRecordId` during installation.
 
+For a normal update, run the new signed deployment copy with the same parameters;
+that replaces the installed script, configuration, application registration, and
+task. To completely reset a damaged or stale installation, run the **new deployment
+copy** (not the copy under Program Files) from an elevated Windows PowerShell 5.1
+session:
+
+```powershell
+& 'C:\Path\To\Current\Show-WDACToast.ps1' `
+    -ResetInstallation `
+    -AppId 'Contoso.WDACToast' `
+    -DisplayName 'Contoso Security' `
+    -SupportUri 'https://support.contoso.example/wdac-review' `
+    -Verbose
+```
+
+Reset removes the configured Scheduled Task and per-user AppUserModelID, the
+installation directory, logs, and duplicate-notification state, and then installs
+the current package. It also reads the previous installed JSON first so renamed
+`AppId` and `TaskName` registrations are removed. The reset targets the owner of
+`explorer.exe` in the current session, so it remains correct when elevation uses a
+segregated administrator account. Run it separately in each affected user's
+interactive session. Do not combine `-ResetInstallation` with `-EventRecordId`.
+
 After upgrading, verify that the installed file exposes the parameter before
 testing an event:
 
@@ -188,6 +211,14 @@ if ($recordId -le 0) { throw 'No WDAC Event ID 3077 record was found.' }
 After a rendering attempt, the log explicitly distinguishes submission to the Windows notification platform from actual on-screen presentation. Windows may accept a toast and still hide it because of Do Not Disturb/Focus Assist or per-application notification settings.
 
 The top-level error handler logs the failing installation or event-record context, exception message, and PowerShell source position, writes the original error to the Scheduled Task history, and exits with code `1`. If the log directory itself cannot be written, logging falls back to a warning without masking the original error.
+
+An absent `ToastEnabled` or `DisableNotificationCenter` registry value means the
+setting is not configured and is therefore allowed. The script checks for the
+property before reading it; this avoids the `PSArgumentException` that
+`Get-ItemPropertyValue` can raise when the Explorer policy key exists but its
+`DisableNotificationCenter` value does not. These checks execute in the
+Scheduled Task's interactive-user context, not the segregated administrator's
+HKCU hive.
 
 Notifications for the same lowercase file path are suppressed for five minutes by default. Every underlying event is still logged. Use `-DuplicateCooldownMinutes 0` to disable suppression or supply a value up to 1440 minutes.
 
