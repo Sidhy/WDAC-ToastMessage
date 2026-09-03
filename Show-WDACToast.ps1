@@ -88,6 +88,49 @@ $StateFile = Join-Path $StateDirectory 'NotificationState.json'
 $InstalledScript = Join-Path $InstallDirectory 'Show-WDACToast.ps1'
 $DefaultLogoPath = Join-Path $InstallDirectory 'MicrosoftDefenderShield.png'
 
+function Get-InteractiveUserIdentity {
+    # An installer started with alternate administrator credentials has a
+    # different Windows identity from the user who owns the desktop. Locate the
+    # Explorer process in this session so the task and HKCU-equivalent
+    # registration are assigned to the user who can actually receive the toast.
+    $CurrentProcess = Get-Process -Id $PID
+    $Explorer = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'explorer.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.SessionId -eq $CurrentProcess.SessionId } |
+        Select-Object -First 1)
+    if ($Explorer.Count -gt 0) {
+        $Owner = Invoke-CimMethod -InputObject $Explorer[0] -MethodName GetOwner -ErrorAction SilentlyContinue
+        if ($null -ne $Owner -and $Owner.ReturnValue -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$Owner.User)) {
+            $AccountName = if ([string]::IsNullOrWhiteSpace([string]$Owner.Domain)) { [string]$Owner.User } else { "$($Owner.Domain)\$($Owner.User)" }
+            $Sid = ([System.Security.Principal.NTAccount]$AccountName).Translate([System.Security.Principal.SecurityIdentifier])
+            return [pscustomobject]@{ Name = $AccountName; Sid = $Sid.Value }
+        }
+    }
+
+    throw 'No logged-on Explorer user was found in this Windows session. Installation requires an interactive user so the task is never registered to an administrator or service account by mistake.'
+}
+
+function Initialize-WdacToastStateDirectory {
+    New-Item -Path $StateDirectory -ItemType Directory -Force | Out-Null
+    New-Item -Path $LogDirectory -ItemType Directory -Force | Out-Null
+
+    # Use a well-known SID rather than a localized account name. Modify applies
+    # to this directory and descendants, allowing every interactive account to
+    # maintain shared duplicate state and diagnostics after an elevated install.
+    $AuthenticatedUsers = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-11')
+    foreach ($Directory in @($StateDirectory, $LogDirectory)) {
+        $Acl = Get-Acl -LiteralPath $Directory
+        $Rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+            $AuthenticatedUsers,
+            [System.Security.AccessControl.FileSystemRights]::Modify,
+            [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+        $Acl.SetAccessRule($Rule)
+        Set-Acl -LiteralPath $Directory -AclObject $Acl
+    }
+}
+
 function Write-WdacToastLog {
     [CmdletBinding()]
     param(
@@ -138,7 +181,8 @@ function Test-WdacToastConfiguration {
 
     Write-WdacToastLog -Message "Starting configuration checks. Host=$($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion); User=$([System.Security.Principal.WindowsIdentity]::GetCurrent().Name); Interactive=$([Environment]::UserInteractive)."
     $Results = [System.Collections.Generic.List[bool]]::new()
-    $AppIdRegistryPath = "HKCU:\Software\Classes\AppUserModelId\$AppId"
+    $TaskUser = Get-InteractiveUserIdentity
+    $AppIdRegistryPath = "Registry::HKEY_USERS\$($TaskUser.Sid)\Software\Classes\AppUserModelId\$AppId"
     $RegistryValues = Get-ItemProperty -LiteralPath $AppIdRegistryPath -ErrorAction SilentlyContinue
     $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 
@@ -153,7 +197,7 @@ function Test-WdacToastConfiguration {
 
     $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task' -Passed ($null -ne $Task) -SuccessMessage "Task '$TaskName' exists." -FailureMessage "Task '$TaskName' does not exist for this user."))
     if ($null -ne $Task) {
-        $ExpectedSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $ExpectedSid = $TaskUser.Sid
         $TaskAction = @($Task.Actions) | Select-Object -First 1
         $TaskExecute = if ($null -ne $TaskAction) { [string]$TaskAction.Execute } else { '' }
         $TaskArguments = if ($null -ne $TaskAction) { [string]$TaskAction.Arguments } else { '' }
@@ -223,7 +267,7 @@ function Install-WdacToast {
     }
 
     New-Item -Path $InstallDirectory -ItemType Directory -Force | Out-Null
-    New-Item -Path $StateDirectory -ItemType Directory -Force | Out-Null
+    Initialize-WdacToastStateDirectory
     if (-not [string]::Equals($SourceScript, $InstalledScript, [StringComparison]::OrdinalIgnoreCase)) {
         Copy-Item -LiteralPath $SourceScript -Destination $InstalledScript -Force
     }
@@ -268,15 +312,15 @@ function Install-WdacToast {
         }
     }
 
-    $AppIdRegistryPath = "HKCU:\Software\Classes\AppUserModelId\$AppId"
+    $TaskUser = Get-InteractiveUserIdentity
+    $AppIdRegistryPath = "Registry::HKEY_USERS\$($TaskUser.Sid)\Software\Classes\AppUserModelId\$AppId"
     New-Item -Path $AppIdRegistryPath -Force | Out-Null
     New-ItemProperty -Path $AppIdRegistryPath -Name DisplayName -Value $DisplayName -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $AppIdRegistryPath -Name ShowInSettings -Value 1 -PropertyType DWord -Force | Out-Null
-    Write-WdacToastLog -Message "Registered AppUserModelID '$AppId' for the current user with display name '$DisplayName'."
+    Write-WdacToastLog -Message "Registered AppUserModelID '$AppId' for interactive user '$($TaskUser.Name)' with display name '$DisplayName'."
 
-    $CurrentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $EscapedScript = [System.Security.SecurityElement]::Escape($InstalledScript)
-    $EscapedUserSid = [System.Security.SecurityElement]::Escape($CurrentIdentity.User.Value)
+    $EscapedUserSid = [System.Security.SecurityElement]::Escape($TaskUser.Sid)
     $TaskXml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -289,7 +333,7 @@ function Install-WdacToast {
 "@
 
     Register-ScheduledTask -TaskName $TaskName -Xml $TaskXml -Force | Out-Null
-    Write-WdacToastLog -Message "Registered Scheduled Task '$TaskName' for SID $($CurrentIdentity.User.Value)."
+    Write-WdacToastLog -Message "Registered Scheduled Task '$TaskName' with InteractiveToken and least privilege for interactive user '$($TaskUser.Name)' (SID $($TaskUser.Sid))."
 }
 
 function Get-NamedEventData {
