@@ -104,6 +104,8 @@ Command-line parameters take precedence over matching JSON properties:
 | `SupportUri`, `ActionLabel`, `AppId`, `DisplayName`, `LogoPath` | Override notification behavior or branding. |
 | `InstallDirectory`, `TaskName` | Override machine installation names; use the same values consistently on later installation/reset commands. |
 | `ResetInstallation` | Removes and rebuilds the installation; valid only with `EventRecordId = 0` and only from a deployment copy outside the installed directory. |
+| `Uninstall` | Removes the requested and installed-configuration task names, then the installation directory; valid only with `EventRecordId = 0` and mutually exclusive with `ResetInstallation`. |
+| `CleanupLogs` | With `Uninstall`, also removes `%LOCALAPPDATA%\Company\WDACToast` for the account running the command; it cannot be used by itself. |
 
 The script enables strict mode and stops on errors. A successful installation or
 suppressed duplicate exits `0`; an uncaught installation or rendering error is
@@ -170,6 +172,26 @@ script deliberately does not mount, enumerate, or modify other users' registry
 hives; an existing per-user notification identity is inert and is safely
 refreshed if that user later receives another toast. Do not combine
 `-ResetInstallation` with `-EventRecordId`.
+
+To uninstall from an elevated deployment copy while preserving per-user logs
+and duplicate state by default:
+
+```powershell
+& 'C:\Path\To\Current\Show-WDACToast.ps1' -Uninstall -Verbose
+```
+
+Add `-CleanupLogs` to remove `%LOCALAPPDATA%\Company\WDACToast` for the account
+running the uninstall. This option does not enumerate user profiles. In
+particular, a SYSTEM-context cleanup affects the SYSTEM profile, **not** every
+interactive user's profile:
+
+```powershell
+& 'C:\Path\To\Current\Show-WDACToast.ps1' -Uninstall -CleanupLogs -Verbose
+```
+
+`-Uninstall` requires `EventRecordId = 0`, cannot be combined with
+`-ResetInstallation`, and returns a nonzero exit code if installed configuration
+cannot be read or required task/directory cleanup cannot be verified.
 
 After upgrading, verify that the installed file exposes the parameter before
 testing an event:
@@ -348,17 +370,21 @@ logged-on user, because it writes Program Files and registers a machine task.
 The registered task itself still runs at `LeastPrivilege` in the interactive
 user context; Intune's install context is not the toast's runtime context.
 
-Use this uninstall command for the repository defaults (put it on one line in
-Intune):
+Use the signed deployment script from the packaged Win32 app for uninstall (put
+it on one line in Intune):
 
 ```text
-%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy AllSigned -Command "Unregister-ScheduledTask -TaskName 'Company WDAC Block Notification' -Confirm:$false -ErrorAction SilentlyContinue; Remove-Item -LiteralPath (Join-Path $env:ProgramFiles 'Company\WDACToast') -Recurse -Force -ErrorAction SilentlyContinue"
+%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File .\Show-WDACToast.ps1 -Uninstall
 ```
 
-If `TaskName` or `InstallDirectory` is customized, change both literals. The
-uninstall intentionally does not enumerate profiles or remove each user's HKCU
-identity, logs, or duplicate state. Removing other users' data would require
-additional privilege and profile-hive manipulation that this project avoids.
+When `TaskName` or `InstallDirectory` is customized, supply the same parameters
+to the uninstall command. The script also reads the installed JSON before
+deleting files and removes the task name recorded there, which protects task
+renames from leaving an orphan. The uninstall intentionally does not enumerate
+profiles or remove each user's HKCU identity, logs, or duplicate state. Optional
+`-CleanupLogs` affects only Intune's SYSTEM profile in this context, not every
+interactive user's profile. Removing other users' data would require additional
+privilege and profile-hive manipulation that this project avoids.
 
 ### 3. Detection rule
 
