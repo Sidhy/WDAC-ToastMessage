@@ -50,6 +50,7 @@ $DefaultConfiguration = [ordered]@{
 }
 $ScriptDirectory = Split-Path -Parent $PSCommandPath
 $ConfigurationFile = Join-Path $ScriptDirectory 'WDACToast.json'
+$LocalizationFile = Join-Path $ScriptDirectory 'WDACToast.Localization.xml'
 $LogoWasConfigured = $PSBoundParameters.ContainsKey('LogoPath')
 if (Test-Path -LiteralPath $ConfigurationFile -PathType Leaf) {
     $Configuration = Get-Content -LiteralPath $ConfigurationFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
@@ -168,6 +169,72 @@ function Get-OptionalRegistryValue {
     return $Property.Value
 }
 
+function Get-WdacToastStrings {
+    [CmdletBinding()]
+    param()
+
+    # GlobalizationPreferences follows the user's Windows display-language
+    # preference list. CurrentUICulture is retained for older Windows builds or
+    # hosts where the WinRT projection is unavailable.
+    $PreferredLanguages = @()
+    try {
+        [void][Windows.System.UserProfile.GlobalizationPreferences, Windows.System.UserProfile, ContentType = WindowsRuntime]
+        $PreferredLanguages = @([Windows.System.UserProfile.GlobalizationPreferences]::Languages)
+    }
+    catch {
+        $PreferredLanguages = @([System.Globalization.CultureInfo]::CurrentUICulture.Name)
+    }
+    if ($PreferredLanguages.Count -eq 0) {
+        $PreferredLanguages = @([System.Globalization.CultureInfo]::CurrentUICulture.Name)
+    }
+
+    if (-not (Test-Path -LiteralPath $LocalizationFile -PathType Leaf)) {
+        throw "The localization resource file is missing at '$LocalizationFile'."
+    }
+    [xml]$Resources = Get-Content -LiteralPath $LocalizationFile -Raw -ErrorAction Stop
+    $Languages = @($Resources.localization.language)
+    $Selected = $null
+
+    foreach ($PreferredLanguage in $PreferredLanguages) {
+        $Selected = $Languages | Where-Object {
+            [string]::Equals([string]$_.tag, [string]$PreferredLanguage, [StringComparison]::OrdinalIgnoreCase)
+        } | Select-Object -First 1
+        if ($null -ne $Selected) { break }
+
+        $NeutralLanguage = ([string]$PreferredLanguage -split '-')[0]
+        $Selected = $Languages | Where-Object {
+            ([string]$_.tag -split '-')[0] -eq $NeutralLanguage
+        } | Select-Object -First 1
+        if ($null -ne $Selected) { break }
+    }
+
+    if ($null -eq $Selected) {
+        $FallbackLanguage = [string]$Resources.localization.fallbackLanguage
+        $Selected = $Languages | Where-Object {
+            [string]::Equals([string]$_.tag, $FallbackLanguage, [StringComparison]::OrdinalIgnoreCase)
+        } | Select-Object -First 1
+    }
+    if ($null -eq $Selected) {
+        throw "Localization file '$LocalizationFile' does not contain its configured fallback language."
+    }
+
+    $Strings = @{}
+    foreach ($StringNode in @($Selected.string)) {
+        $Strings[[string]$StringNode.name] = [string]$StringNode.InnerText
+    }
+    $RequiredStrings = @('Title', 'Message', 'UnknownFile', 'NotProvided', 'BlockedAppPath', 'CalledByAppPath', 'BlockedByPolicy', 'VersionFormat', 'MoreDetails', 'Dismiss', 'RequestReview')
+    foreach ($RequiredString in $RequiredStrings) {
+        if (-not $Strings.ContainsKey($RequiredString) -or [string]::IsNullOrWhiteSpace([string]$Strings[$RequiredString])) {
+            throw "Language '$($Selected.tag)' is missing required string '$RequiredString' in '$LocalizationFile'."
+        }
+    }
+
+    return [pscustomobject]@{
+        Language = [string]$Selected.tag
+        Strings = $Strings
+    }
+}
+
 function Test-WdacToastConfiguration {
     [CmdletBinding()]
     param([switch]$IncludeRendererChecks)
@@ -270,6 +337,14 @@ function Install-WdacToast {
         }
         Write-WdacToastLog -Message "Installed configuration is present at '$InstalledConfigurationFile'."
     }
+    $InstalledLocalizationFile = Join-Path $InstallDirectory 'WDACToast.Localization.xml'
+    if (-not (Test-Path -LiteralPath $LocalizationFile -PathType Leaf)) {
+        throw "The deployment package is missing '$LocalizationFile'."
+    }
+    if (-not [string]::Equals($LocalizationFile, $InstalledLocalizationFile, [StringComparison]::OrdinalIgnoreCase)) {
+        Copy-Item -LiteralPath $LocalizationFile -Destination $InstalledLocalizationFile -Force
+    }
+    Write-WdacToastLog -Message "Installed localization resources at '$InstalledLocalizationFile'."
     $InstalledCommand = Get-Command -Name $InstalledScript -CommandType ExternalScript -ErrorAction Stop
     if (-not $InstalledCommand.Parameters.ContainsKey('EventRecordId')) {
         throw "The installed script at '$InstalledScript' does not declare the EventRecordId parameter."
@@ -503,7 +578,9 @@ function Show-ToastNotification {
         [Parameter(Mandatory)][string]$Message,
         [Parameter(Mandatory)][string]$FileName,
         [Parameter(Mandatory)][System.Collections.IDictionary]$Details,
-        [Parameter(Mandatory)][string]$DetailsUri
+        [Parameter(Mandatory)][string]$DetailsUri,
+        [Parameter(Mandatory)][string]$Language,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Strings
     )
 
     if ($PSVersionTable.PSEdition -ne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5) {
@@ -526,14 +603,15 @@ function Show-ToastNotification {
         throw 'Toast notifications are disabled for the current user (HKCU PushNotifications\ToastEnabled is 0). Enable notifications in Windows Settings or through organizational policy.'
     }
 
-    $Escape = { param([AllowNull()][string]$Value) [System.Security.SecurityElement]::Escape($(if ([string]::IsNullOrWhiteSpace($Value)) { 'Not provided' } else { $Value })) }
+    $Escape = { param([AllowNull()][string]$Value) [System.Security.SecurityElement]::Escape($(if ([string]::IsNullOrWhiteSpace($Value)) { $Strings.NotProvided } else { $Value })) }
     $DetailNodes = foreach ($Entry in $Details.GetEnumerator()) {
         '<text hint-style="captionSubtle" hint-wrap="true">{0}</text><text hint-style="body" hint-wrap="true">{1}</text>' -f
             (& $Escape ([string]$Entry.Key).ToUpperInvariant()), (& $Escape ([string]$Entry.Value))
     }
 
-    $ActionXml = '<actions><action content="More details" arguments="{0}" activationType="protocol"/><action content="Dismiss" arguments="dismiss" activationType="system"/><action content="{1}" arguments="{2}" activationType="protocol"/></actions>' -f
-        (& $Escape $DetailsUri), (& $Escape $ActionLabel), (& $Escape $SupportUri)
+    $LocalizedActionLabel = if ($ActionLabel -eq 'Request Review') { $Strings.RequestReview } else { $ActionLabel }
+    $ActionXml = '<actions><action content="{0}" arguments="{1}" activationType="protocol"/><action content="{2}" arguments="dismiss" activationType="system"/><action content="{3}" arguments="{4}" activationType="protocol"/></actions>' -f
+        (& $Escape $Strings.MoreDetails), (& $Escape $DetailsUri), (& $Escape $Strings.Dismiss), (& $Escape $LocalizedActionLabel), (& $Escape $SupportUri)
 
     $ImageXml = ''
     if (-not [string]::IsNullOrWhiteSpace($LogoPath)) {
@@ -558,8 +636,10 @@ function Show-ToastNotification {
         }
     }
 
-    $ToastXml = '<toast><visual><binding template="ToastGeneric">{0}<text hint-maxLines="1">{1}</text><text hint-maxLines="2">{2}</text><text hint-style="body" hint-wrap="true" hint-maxLines="2">{3}</text><group><subgroup>{4}</subgroup></group></binding></visual>{5}</toast>' -f
-        $ImageXml, (& $Escape $Title), (& $Escape $Message), (& $Escape $FileName), ($DetailNodes -join ''), $ActionXml
+    # The BCP-47 lang attribute is part of the Microsoft ToastGeneric schema and
+    # lets Windows apply the appropriate font and text shaping to this payload.
+    $ToastXml = '<toast><visual><binding template="ToastGeneric" lang="{0}">{1}<text hint-maxLines="1">{2}</text><text hint-maxLines="2">{3}</text><text hint-style="body" hint-wrap="true" hint-maxLines="2">{4}</text><group><subgroup>{5}</subgroup></group></binding></visual>{6}</toast>' -f
+        (& $Escape $Language), $ImageXml, (& $Escape $Title), (& $Escape $Message), (& $Escape $FileName), ($DetailNodes -join ''), $ActionXml
 
     $Document = [Windows.Data.Xml.Dom.XmlDocument]::new()
     $Document.LoadXml($ToastXml)
@@ -616,9 +696,11 @@ function Invoke-WdacToast {
     $Sha1Hash = Get-FirstEventValue -EventData $EventData -Names @('SHA1 Hash', 'SHA1Hash', 'SHA1 Flat Hash', 'SHA1FlatHash')
     $FileDetails = Get-BlockedFileDetails -Path $FilePath
     $CallerDetails = Get-BlockedFileDetails -Path $ProcessPath
+    $Localization = Get-WdacToastStrings
+    Write-WdacToastLog -Message "Selected toast language '$($Localization.Language)' from the Windows user language preferences."
 
     $FileName = if ([string]::IsNullOrWhiteSpace($FilePath)) {
-        'Unknown file'
+        $Localization.Strings.UnknownFile
     }
     else {
         $FilePath -replace '^.*[\\/]', ''
@@ -680,22 +762,24 @@ function Invoke-WdacToast {
         $PolicyVersion
     }
     else {
-        "$PolicyName (version $PolicyVersion)"
+        $Localization.Strings.VersionFormat -f $PolicyName, $PolicyVersion
     }
     $ToastDetails = [ordered]@{
-        'Blocked app path' = $FilePath
-        'Called by app path' = $ProcessPath
-        'Blocked by policy name and version' = $PolicyDisplay
+        ($Localization.Strings.BlockedAppPath) = $FilePath
+        ($Localization.Strings.CalledByAppPath) = $ProcessPath
+        ($Localization.Strings.BlockedByPolicy) = $PolicyDisplay
     }
     $DetailsUri = ([Uri](Resolve-Path -LiteralPath $LogFile).Path).AbsoluteUri
 
     Write-WdacToastLog -Message "Submitting toast to the Windows notification platform with AppId '$AppId'."
     Show-ToastNotification `
-        -Title 'Application blocked by security policy' `
-        -Message 'This application is not approved by your organization or could put this device and company data at risk.' `
+        -Title $Localization.Strings.Title `
+        -Message $Localization.Strings.Message `
         -FileName $FileName `
         -Details $ToastDetails `
-        -DetailsUri $DetailsUri
+        -DetailsUri $DetailsUri `
+        -Language $Localization.Language `
+        -Strings $Localization.Strings
     Write-WdacToastLog -Message 'The Windows notification platform accepted the toast. Windows can still suppress its presentation because of Do Not Disturb/Focus Assist or per-app notification settings.'
 
     $State[$KeyHash] = $Event.TimeCreated
