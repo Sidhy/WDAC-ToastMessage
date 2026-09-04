@@ -6,5 +6,6 @@
   "InstallDirectory": "C:\\Program Files\\Company\\WDACToast",
   "LogoPath": "C:\\Program Files\\Company\\WDACToast\\MicrosoftDefenderShield.png",
   "TaskName": "Company WDAC Block Notification",
+  "ExecutionPolicy": "AllSigned",
   "DuplicateCooldownMinutes": 5
 }
