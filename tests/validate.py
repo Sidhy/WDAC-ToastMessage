@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 collector = (ROOT / "Show-WDACToast.ps1").read_text(encoding="utf-8")
 configuration = (ROOT / "WDACToast.json").read_text(encoding="utf-8")
 localization = (ROOT / "WDACToast.Localization.xml").read_text(encoding="utf-8")
+profile_cleanup = (ROOT / "Cleanup-WDACToastAllProfiles.ps1").read_text(encoding="utf-8")
 
 required_collector_fragments = [
     "[long]$EventRecordId",
@@ -191,7 +192,20 @@ assert install_branch < repair_branch, "explicit installation must run before ev
 assert "if ($EventRecordId -eq 0) {\n        if ($Uninstall)" in collector
 assert "return\n        }\n        # An explicit installation run" in collector
 assert not (ROOT / "Install-WDACToast.ps1").exists()
-assert [path.name for path in ROOT.glob("*.ps1")] == ["Show-WDACToast.ps1"]
+assert {path.name for path in ROOT.glob("*.ps1")} == {
+    "Show-WDACToast.ps1",
+    "Cleanup-WDACToastAllProfiles.ps1",
+}
+assert "CurrentVersion\\ProfileList" in profile_cleanup
+assert "$RelativeStatePath = 'AppData\\Local\\Company\\WDACToast'" in profile_cleanup
+assert "[Environment]::ExpandEnvironmentVariables" in profile_cleanup
+assert "Remove-Item -LiteralPath $StateDirectory -Recurse -Force" in profile_cleanup
+assert "NTUSER.DAT" in profile_cleanup and "HKEY_USERS" in profile_cleanup
+assert "Registry::HKEY_USERS" not in profile_cleanup
+assert "Remove-Item -LiteralPath $ProfileDirectory" not in profile_cleanup
+assert "Cleanup-WDACToastAllProfiles.ps1" in readme
+assert "SYSTEM profile, **not** every" in readme
+assert "registration is inert" in readme
 
 match = re.search(r'\$TaskXml = @"\n(.*?)\n"@', collector, re.DOTALL)
 assert match, "scheduled-task XML template was not found"
