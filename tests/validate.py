@@ -36,6 +36,15 @@ required_collector_fragments = [
     "function Get-OptionalRegistryValue",
     "$Item.PSObject.Properties[$Name]",
     "function Reset-WdacToastInstallation",
+    "function Uninstall-WdacToast",
+    "[switch]$Uninstall",
+    "[switch]$CleanupLogs",
+    "Uninstall and ResetInstallation are mutually exclusive",
+    "CleanupLogs is valid only when Uninstall is supplied",
+    "Unregister-ScheduledTask -TaskName $RegisteredTaskName -Confirm:$false -ErrorAction Stop",
+    'Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -eq $RegisteredTaskName',
+    "Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction Stop",
+    "Remove-Item -LiteralPath $StateDirectory -Recurse -Force -ErrorAction Stop",
     "Unregister-ScheduledTask",
     "ResetInstallation cannot be combined with EventRecordId",
     "Configuration check [$Name] failed",
@@ -107,10 +116,18 @@ assert "Event/System/EventRecordID" in collector
 assert '`$(EventRecordID)' in collector
 assert "catch {\n    $Failure = $_" in collector
 assert "exit 1" in collector
+uninstall_branch = collector.index("function Uninstall-WdacToast")
+installed_config_read = collector.index("Get-Content -LiteralPath $InstalledConfigurationFile -Raw -ErrorAction Stop", uninstall_branch)
+install_directory_removal = collector.index("Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction Stop", uninstall_branch)
+assert installed_config_read < install_directory_removal, "uninstall must read installed configuration before deleting files"
+readme = (ROOT / "README.md").read_text(encoding="utf-8")
+assert '-Command "Unregister-ScheduledTask' not in readme
+assert "-File .\\Show-WDACToast.ps1 -Uninstall" in readme
 install_branch = collector.index("if ($EventRecordId -eq 0) {")
 repair_branch = collector.index("if (-not (Test-WdacToastInstalled))", install_branch)
 assert install_branch < repair_branch, "explicit installation must run before event-only repair"
-assert "if ($EventRecordId -eq 0) {\n        # An explicit installation run" in collector
+assert "if ($EventRecordId -eq 0) {\n        if ($Uninstall)" in collector
+assert "return\n        }\n        # An explicit installation run" in collector
 assert not (ROOT / "Install-WDACToast.ps1").exists()
 assert [path.name for path in ROOT.glob("*.ps1")] == ["Show-WDACToast.ps1"]
 

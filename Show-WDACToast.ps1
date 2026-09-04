@@ -32,7 +32,15 @@ param(
     # Removes the existing machine registration, installed files, and mutable
     # state before installing the deployment copy again. This is intentionally
     # valid only for an installation invocation (EventRecordId 0).
-    [switch]$ResetInstallation
+    [switch]$ResetInstallation,
+
+    # Removes the machine task and installed files without touching per-user
+    # state unless CleanupLogs is also specified.
+    [switch]$Uninstall,
+
+    # Valid only with Uninstall. This affects the profile of the account that
+    # runs the command (for example, SYSTEM when invoked by Intune).
+    [switch]$CleanupLogs
 )
 
 Set-StrictMode -Version Latest
@@ -425,6 +433,87 @@ function Reset-WdacToastInstallation {
     Write-WdacToastLog -Message 'Reset the WDAC toast task, installed files, and state for the current profile.'
 }
 
+function Uninstall-WdacToast {
+    if ($EventRecordId -ne 0) {
+        throw 'Uninstall requires an installation-mode invocation (EventRecordId = 0).'
+    }
+
+    $Failures = [System.Collections.Generic.List[string]]::new()
+    $TaskNames = @($TaskName)
+    $InstalledConfigurationFile = Join-Path $InstallDirectory 'WDACToast.json'
+
+    # Read the installed configuration before removing either tasks or files.
+    # Its TaskName may differ from the name requested by this deployment copy.
+    if (Test-Path -LiteralPath $InstalledConfigurationFile -PathType Leaf) {
+        try {
+            $InstalledConfiguration = Get-Content -LiteralPath $InstalledConfigurationFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if (-not [string]::IsNullOrWhiteSpace([string]$InstalledConfiguration.TaskName)) {
+                $TaskNames += [string]$InstalledConfiguration.TaskName
+            }
+        }
+        catch {
+            $Message = "Could not read installed configuration '$InstalledConfigurationFile': $($_.Exception.Message)"
+            $Failures.Add($Message)
+            Write-Warning $Message
+        }
+    }
+
+    foreach ($RegisteredTaskName in @($TaskNames | Select-Object -Unique)) {
+        try {
+            $MatchingTasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -eq $RegisteredTaskName)
+            if ($MatchingTasks.Count -gt 0) {
+                Unregister-ScheduledTask -TaskName $RegisteredTaskName -Confirm:$false -ErrorAction Stop
+            }
+            $RemainingTasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -eq $RegisteredTaskName)
+            if ($RemainingTasks.Count -gt 0) {
+                throw "Scheduled Task '$RegisteredTaskName' is still registered."
+            }
+            Write-WdacToastLog -Message "Verified removal of Scheduled Task '$RegisteredTaskName'."
+        }
+        catch {
+            $Message = "Failed to remove or verify Scheduled Task '$RegisteredTaskName': $($_.Exception.Message)"
+            $Failures.Add($Message)
+            Write-Warning $Message
+        }
+    }
+
+    # Attempt file cleanup only after every requested/recorded task name has
+    # been processed, even when one of the task operations failed.
+    try {
+        if (Test-Path -LiteralPath $InstallDirectory) {
+            Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction Stop
+        }
+        if (Test-Path -LiteralPath $InstallDirectory) {
+            throw "Installation directory '$InstallDirectory' still exists."
+        }
+    }
+    catch {
+        $Message = "Failed to remove or verify installation directory '$InstallDirectory': $($_.Exception.Message)"
+        $Failures.Add($Message)
+        Write-Warning $Message
+    }
+
+    if ($CleanupLogs) {
+        try {
+            if (Test-Path -LiteralPath $StateDirectory) {
+                Remove-Item -LiteralPath $StateDirectory -Recurse -Force -ErrorAction Stop
+            }
+            if (Test-Path -LiteralPath $StateDirectory) {
+                throw "Current-account state directory '$StateDirectory' still exists."
+            }
+        }
+        catch {
+            $Message = "Failed to remove or verify current-account state directory '$StateDirectory': $($_.Exception.Message)"
+            $Failures.Add($Message)
+            Write-Warning $Message
+        }
+    }
+
+    if ($Failures.Count -gt 0) {
+        throw "WDAC toast uninstall completed with $($Failures.Count) failure(s): $($Failures -join ' | ')"
+    }
+}
+
 function Get-NamedEventData {
     [CmdletBinding()]
     param(
@@ -648,11 +737,24 @@ function Show-ToastNotification {
 }
 
 function Invoke-WdacToast {
-    Write-WdacToastLog -Message "Invocation started with EventRecordId=$EventRecordId, ResetInstallation=$ResetInstallation, AppId='$AppId', TaskName='$TaskName', InstallDirectory='$InstallDirectory'."
+    Write-WdacToastLog -Message "Invocation started with EventRecordId=$EventRecordId, ResetInstallation=$ResetInstallation, Uninstall=$Uninstall, CleanupLogs=$CleanupLogs, AppId='$AppId', TaskName='$TaskName', InstallDirectory='$InstallDirectory'."
     if ($ResetInstallation -and $EventRecordId -ne 0) {
         throw 'ResetInstallation cannot be combined with EventRecordId. Run reset as a separate elevated installation command.'
     }
+    if ($Uninstall -and $ResetInstallation) {
+        throw 'Uninstall and ResetInstallation are mutually exclusive.'
+    }
+    if ($Uninstall -and $EventRecordId -ne 0) {
+        throw 'Uninstall requires EventRecordId = 0 and cannot be combined with event processing.'
+    }
+    if ($CleanupLogs -and -not $Uninstall) {
+        throw 'CleanupLogs is valid only when Uninstall is supplied.'
+    }
     if ($EventRecordId -eq 0) {
+        if ($Uninstall) {
+            Uninstall-WdacToast
+            return
+        }
         # An explicit installation run must always copy the invoking source.
         # Merely checking that a file exists leaves an older, incompatible copy
         # in Program Files and causes parameter binding to fail before it can run.
@@ -801,7 +903,11 @@ catch {
     if ($Failure.InvocationInfo -and -not [string]::IsNullOrWhiteSpace($Failure.InvocationInfo.PositionMessage)) {
         $Details += " | $($Failure.InvocationInfo.PositionMessage -replace '[\r\n]+', ' ')"
     }
-    Write-WdacToastLog -Level ERROR -Message $Details
+    # A cleanup uninstall must not recreate the state/log directory it just
+    # removed. Its warnings and terminating error remain visible to the caller.
+    if (-not ($Uninstall -and $CleanupLogs)) {
+        Write-WdacToastLog -Level ERROR -Message $Details
+    }
     Write-Error -ErrorRecord $Failure
     exit 1
 }
