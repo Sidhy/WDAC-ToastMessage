@@ -186,6 +186,26 @@ assert "-File .\\Show-WDACToast.ps1 -Uninstall" in readme
 assert "HKLM:\\Software\\Company\\WDACToast" in readme
 assert "repository default" in readme and "currently configured" in readme
 assert "Administrator rights for every install, upgrade, reset, and uninstall" in readme
+
+intune_package_instructions = readme.split("### 1. Prepare the package", 1)[1].split(
+    "### 2. Configure the Win32 app", 1
+)[0]
+normalized_intune_package_instructions = re.sub(r"\s+", " ", intune_package_instructions)
+# Keep the documented package synchronized with files that Install-WdacToast
+# requires even when no optional configuration or branding has been supplied.
+unconditional_install_files = {
+    "Show-WDACToast.ps1": "$SourceScript = $PSCommandPath",
+    "WDACToast.Localization.xml": "The deployment package is missing '$LocalizationFile'.",
+}
+for filename, requirement in unconditional_install_files.items():
+    assert requirement in install_body, f"Install-WdacToast no longer proves that {filename} is required"
+    assert f"`{filename}`" in intune_package_instructions, (
+        f"Intune packaging instructions omit required file {filename}"
+    )
+assert "`WDACToast.json`" in intune_package_instructions
+assert "any branding asset intentionally supplied" in normalized_intune_package_instructions
+assert "before signing" in normalized_intune_package_instructions
+assert "do not edit the script after signing" in normalized_intune_package_instructions
 install_branch = collector.index("if ($EventRecordId -eq 0) {")
 repair_branch = collector.index("if (-not (Test-WdacToastInstalled))", install_branch)
 assert install_branch < repair_branch, "explicit installation must run before event-only repair"

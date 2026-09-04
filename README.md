@@ -431,9 +431,15 @@ management](https://learn.microsoft.com/intune/intune-service/apps/apps-win32-ap
 ### 1. Prepare the package
 
 1. Customize `WDACToast.json`; do not leave the example support URL.
-2. Code-sign `Show-WDACToast.ps1` with the production certificate after all
-   edits are complete.
-3. Put only `Show-WDACToast.ps1` and `WDACToast.json` in the source folder.
+2. Finalize every package file—including `Show-WDACToast.ps1`,
+   `WDACToast.json`, `WDACToast.Localization.xml`, and any intentionally
+   supplied branding asset—before signing. Code-sign `Show-WDACToast.ps1` with
+   the production certificate only after all files and settings are final; do
+   not edit the script after signing.
+3. Put `Show-WDACToast.ps1`, `WDACToast.json`, and
+   `WDACToast.Localization.xml` in the source folder, along with any branding
+   asset intentionally supplied by your organization. Do not add unrelated
+   files.
 4. Run the Microsoft Win32 Content Prep Tool and select
    `Show-WDACToast.ps1` as the setup file. Upload the resulting `.intunewin`.
 
