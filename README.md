@@ -103,6 +103,8 @@ Command-line parameters take precedence over matching JSON properties:
 | `DuplicateCooldownMinutes` | Overrides the configured suppression window for this invocation. |
 | `SupportUri`, `ActionLabel`, `AppId`, `DisplayName`, `LogoPath` | Override notification behavior or branding. |
 | `InstallDirectory`, `TaskName` | Override machine installation names; use the same values consistently on later installation/reset commands. |
+| `Upgrade` | Transactionally replaces an existing installation; valid only with `EventRecordId = 0` and mutually exclusive with reset and uninstall. |
+| `UpgradeFromInstallDirectory` | With `Upgrade`, identifies the old directory when migrating to a new `InstallDirectory`. |
 | `ResetInstallation` | Removes and rebuilds the installation; valid only with `EventRecordId = 0` and only from a deployment copy outside the installed directory. |
 | `Uninstall` | Removes the requested and installed-configuration task names, then the installation directory; valid only with `EventRecordId = 0` and mutually exclusive with `ResetInstallation`. |
 | `CleanupLogs` | With `Uninstall`, also removes `%LOCALAPPDATA%\Company\WDACToast` for the account running the command; it cannot be used by itself. |
@@ -139,20 +141,56 @@ group principal lets Task Scheduler select a signed-in interactive token instead
 of permanently binding the task to the installer. Mutable state remains inside
 the selected user's profile.
 
-The command is idempotent. Every installation run copies the invoking source over
-the Program Files copy and re-registers the components, even when they already
-exist. This is required for upgrades: run the downloaded/deployment copy above,
-not `C:\Program Files\Company\WDACToast\Show-WDACToast.ps1`, and do not pass
-`EventRecordId` during installation.
+The install command is idempotent. Every installation run copies the invoking
+source over the Program Files copy and re-registers the components. For an
+intentional update, use the explicit `-Upgrade` workflow below so the prior
+identity is captured, the resulting task is verified, and failures can be
+rolled back. Run the downloaded/deployment copy, not
+`C:\Program Files\Company\WDACToast\Show-WDACToast.ps1`, and do not pass a
+positive `EventRecordId` during installation or upgrade.
 
 An installation invocation uses `EventRecordId = 0`. It installs and runs
 configuration checks, emits a warning that no toast was attempted, and then
 returns success unless an operation throws. Configuration-check warnings are
 diagnostic: their Boolean result is not an installation gate.
 
-For a normal update, run the new signed deployment copy with the same parameters;
-that replaces the installed script, configuration, and computer task. To
-completely reset a damaged or stale installation, run the **new deployment
+For a normal update, run the new signed deployment copy with the same identity
+parameters and the explicit upgrade switch:
+
+```powershell
+& 'C:\Path\To\Current\Show-WDACToast.ps1' `
+    -Upgrade `
+    -AppId 'Contoso.WDACToast' `
+    -DisplayName 'Contoso Security' `
+    -SupportUri 'https://support.contoso.example/wdac-review' `
+    -Verbose
+```
+
+Upgrade reads the installed `WDACToast.json` before replacing files. A same-name
+task is replaced with `Register-ScheduledTask -Force`; when `TaskName` changes,
+the replacement is registered first and the recorded old task is then removed.
+The operation verifies that exactly one new-name task remains and that its action
+uses the newly installed script. If copying succeeds but registration or
+verification fails, it restores the destination file snapshot and the prior
+task; the terminating error explicitly reports any incomplete rollback.
+
+For a task-name migration, put the new `TaskName` in the deployment JSON (or pass
+it on the command line) and use `-Upgrade`; do not manually delete the old task.
+For an installation-directory migration, provide both the new directory and the
+old directory so the installer can read the prior identity and remove the old
+files only after successful verification:
+
+```powershell
+& 'C:\Path\To\Current\Show-WDACToast.ps1' `
+    -Upgrade `
+    -InstallDirectory 'C:\Program Files\Contoso\WDACToast' `
+    -UpgradeFromInstallDirectory 'C:\Program Files\Company\WDACToast' `
+    -TaskName 'Contoso WDAC Block Notification'
+```
+
+Do not run an upgrade from the installed copy, combine `-Upgrade` with
+`-ResetInstallation` or `-Uninstall`, or supply a positive `EventRecordId`.
+To completely reset a damaged or stale installation, run the **new deployment
 copy** (not the copy under Program Files) from an elevated Windows PowerShell 5.1
 session:
 
