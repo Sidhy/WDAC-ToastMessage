@@ -39,6 +39,11 @@ required_collector_fragments = [
     "function Uninstall-WdacToast",
     "[switch]$Uninstall",
     "[switch]$CleanupLogs",
+    "[switch]$Upgrade",
+    "function Upgrade-WdacToastInstallation",
+    "Upgrade is mutually exclusive with ResetInstallation and Uninstall",
+    "Upgrade requires EventRecordId = 0",
+    "Register-ScheduledTask -TaskName $PreviousTaskName -Xml $PreviousTaskXml -Force",
     "Uninstall and ResetInstallation are mutually exclusive",
     "CleanupLogs is valid only when Uninstall is supplied",
     "Unregister-ScheduledTask -TaskName $RegisteredTaskName -Confirm:$false -ErrorAction Stop",
@@ -121,12 +126,25 @@ installed_config_read = collector.index("Get-Content -LiteralPath $InstalledConf
 install_directory_removal = collector.index("Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction Stop", uninstall_branch)
 assert installed_config_read < install_directory_removal, "uninstall must read installed configuration before deleting files"
 
-
 def function_body(name: str) -> str:
     """Return a top-level PowerShell function through the next declaration."""
     start = collector.index(f"function {name} {{")
     next_function = collector.find("\nfunction ", start + 1)
     return collector[start : next_function if next_function != -1 else len(collector)]
+
+
+upgrade_body = function_body("Upgrade-WdacToastInstallation")
+upgrade_read = upgrade_body.index("Get-Content -LiteralPath $PreviousConfigurationFile -Raw -ErrorAction Stop")
+upgrade_copy = upgrade_body.index("\n        Install-WdacToast")
+upgrade_register = collector.index("Register-ScheduledTask -TaskName $TaskName -Xml $TaskXml -Force")
+assert upgrade_read < upgrade_copy, "upgrade must capture installed identity before overwriting files"
+assert upgrade_register != -1, "same-name upgrades must force task replacement"
+old_name_guard = upgrade_body.index("if (-not [string]::Equals($PreviousTaskName, $TaskName")
+old_name_removal = upgrade_body.index("Unregister-ScheduledTask -TaskName $PreviousTaskName", old_name_guard)
+verification = upgrade_body.index("$IntendedTasks.Count -ne 1")
+assert old_name_guard < old_name_removal < verification, "renamed upgrades must remove and verify the old task"
+assert "[string]$Action.Arguments -notlike \"*${InstalledScript}*\"" in upgrade_body
+assert "Rollback restored the prior files and task" in upgrade_body
 
 
 for cleanup_function in ("Reset-WdacToastInstallation", "Uninstall-WdacToast"):

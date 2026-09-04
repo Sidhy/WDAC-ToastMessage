@@ -29,6 +29,14 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$TaskName = 'Company WDAC Block Notification',
 
+    # Replaces an existing installation while preserving enough of its identity
+    # to remove a renamed task and to roll back a failed task registration.
+    [switch]$Upgrade,
+
+    # Required only when moving an installation to a different directory.
+    [ValidateNotNullOrEmpty()]
+    [string]$UpgradeFromInstallDirectory,
+
     # Removes the existing machine registration, installed files, and mutable
     # state before installing the deployment copy again. This is intentionally
     # valid only for an installation invocation (EventRecordId 0).
@@ -403,6 +411,97 @@ function Install-WdacToast {
     Write-WdacToastLog -Message "Registered Scheduled Task '$TaskName' for the well-known INTERACTIVE group (S-1-5-4) at least privilege."
 }
 
+function Upgrade-WdacToastInstallation {
+    if ([string]::Equals($PSCommandPath, $InstalledScript, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Upgrade must be run from the new deployment copy, not '$InstalledScript'."
+    }
+
+    $PreviousDirectory = if ($PSBoundParameters.ContainsKey('UpgradeFromInstallDirectory')) {
+        $UpgradeFromInstallDirectory
+    }
+    else {
+        $InstallDirectory
+    }
+    $PreviousConfigurationFile = Join-Path $PreviousDirectory 'WDACToast.json'
+    if (-not (Test-Path -LiteralPath $PreviousConfigurationFile -PathType Leaf)) {
+        throw "Upgrade could not find the prior installed configuration at '$PreviousConfigurationFile'. Use UpgradeFromInstallDirectory when migrating directories."
+    }
+
+    # Capture the complete prior configuration (including future identity
+    # properties), as well as the identity values used by this version, before
+    # Install-WdacToast overwrites any destination file.
+    $PreviousConfiguration = Get-Content -LiteralPath $PreviousConfigurationFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $PreviousTaskName = [string]$PreviousConfiguration.TaskName
+    $RecordedPreviousDirectory = [string]$PreviousConfiguration.InstallDirectory
+    if ([string]::IsNullOrWhiteSpace($PreviousTaskName) -or [string]::IsNullOrWhiteSpace($RecordedPreviousDirectory)) {
+        throw "Prior installed configuration '$PreviousConfigurationFile' must contain TaskName and InstallDirectory."
+    }
+    $PreviousIdentity = [ordered]@{}
+    foreach ($Property in $PreviousConfiguration.PSObject.Properties) {
+        $PreviousIdentity[$Property.Name] = $Property.Value
+    }
+    Write-WdacToastLog -Message "Captured prior installation identity from '$PreviousConfigurationFile': TaskName='$PreviousTaskName'; InstallDirectory='$RecordedPreviousDirectory'; AppId='$($PreviousIdentity.AppId)'; DisplayName='$($PreviousIdentity.DisplayName)'."
+
+    $BackupDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("WDACToast-upgrade-{0}" -f [guid]::NewGuid().ToString('N'))
+    $DestinationExisted = Test-Path -LiteralPath $InstallDirectory
+    if ($DestinationExisted) {
+        Copy-Item -LiteralPath $InstallDirectory -Destination $BackupDirectory -Recurse -Force -ErrorAction Stop
+    }
+    $PreviousTaskXml = $null
+    if ($null -ne (Get-ScheduledTask -TaskName $PreviousTaskName -ErrorAction SilentlyContinue)) {
+        $PreviousTaskXml = Export-ScheduledTask -TaskName $PreviousTaskName -ErrorAction Stop
+    }
+
+    try {
+        # Install uses Register-ScheduledTask -Force, replacing a same-name task.
+        Install-WdacToast
+
+        if (-not [string]::Equals($PreviousTaskName, $TaskName, [StringComparison]::OrdinalIgnoreCase)) {
+            Unregister-ScheduledTask -TaskName $PreviousTaskName -Confirm:$false -ErrorAction Stop
+        }
+
+        $IntendedTasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -eq $TaskName)
+        $OldTasks = if ([string]::Equals($PreviousTaskName, $TaskName, [StringComparison]::OrdinalIgnoreCase)) { @() } else {
+            @(Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -eq $PreviousTaskName)
+        }
+        if ($IntendedTasks.Count -ne 1 -or $OldTasks.Count -ne 0) {
+            throw "Upgrade verification expected exactly one '$TaskName' task and no '$PreviousTaskName' task; found $($IntendedTasks.Count) and $($OldTasks.Count)."
+        }
+        $Action = @($IntendedTasks[0].Actions) | Select-Object -First 1
+        if ($null -eq $Action -or [string]$Action.Arguments -notlike "*${InstalledScript}*") {
+            throw "Upgrade verification found that Scheduled Task '$TaskName' does not point to '$InstalledScript'."
+        }
+
+        if (-not [string]::Equals($PreviousDirectory, $InstallDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $PreviousDirectory -Recurse -Force -ErrorAction Stop
+        }
+        Write-WdacToastLog -Message "Verified upgraded Scheduled Task '$TaskName' points to '$InstalledScript' and no previous task remains."
+    }
+    catch {
+        $UpgradeFailure = $_
+        # File copying is transactional for upgrades: restore the destination
+        # snapshot and prior task, or explicitly report rollback failure.
+        $RollbackFailures = @()
+        try {
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+            if ($null -ne $PreviousTaskXml) {
+                Register-ScheduledTask -TaskName $PreviousTaskName -Xml $PreviousTaskXml -Force -ErrorAction Stop | Out-Null
+            }
+        }
+        catch { $RollbackFailures += "task rollback: $($_.Exception.Message)" }
+        try {
+            Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction SilentlyContinue
+            if ($DestinationExisted) { Copy-Item -LiteralPath $BackupDirectory -Destination $InstallDirectory -Recurse -Force -ErrorAction Stop }
+        }
+        catch { $RollbackFailures += "file rollback: $($_.Exception.Message)" }
+        $RollbackStatus = if ($RollbackFailures.Count -eq 0) { 'Rollback restored the prior files and task.' } else { "Rollback was incomplete: $($RollbackFailures -join '; ')" }
+        throw "Upgrade failed: $($UpgradeFailure.Exception.Message) $RollbackStatus"
+    }
+    finally {
+        Remove-Item -LiteralPath $BackupDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Reset-WdacToastInstallation {
     if ([string]::Equals($PSCommandPath, $InstalledScript, [StringComparison]::OrdinalIgnoreCase)) {
         throw "ResetInstallation must be run from the new deployment copy, not '$InstalledScript'."
@@ -740,12 +839,21 @@ function Show-ToastNotification {
 }
 
 function Invoke-WdacToast {
-    Write-WdacToastLog -Message "Invocation started with EventRecordId=$EventRecordId, ResetInstallation=$ResetInstallation, Uninstall=$Uninstall, CleanupLogs=$CleanupLogs, AppId='$AppId', TaskName='$TaskName', InstallDirectory='$InstallDirectory'."
+    Write-WdacToastLog -Message "Invocation started with EventRecordId=$EventRecordId, Upgrade=$Upgrade, ResetInstallation=$ResetInstallation, Uninstall=$Uninstall, CleanupLogs=$CleanupLogs, AppId='$AppId', TaskName='$TaskName', InstallDirectory='$InstallDirectory'."
+    if ($Upgrade -and $EventRecordId -ne 0) {
+        throw 'Upgrade requires EventRecordId = 0 and cannot be combined with event processing.'
+    }
     if ($ResetInstallation -and $EventRecordId -ne 0) {
         throw 'ResetInstallation cannot be combined with EventRecordId. Run reset as a separate elevated installation command.'
     }
     if ($Uninstall -and $ResetInstallation) {
         throw 'Uninstall and ResetInstallation are mutually exclusive.'
+    }
+    if ($Upgrade -and ($ResetInstallation -or $Uninstall)) {
+        throw 'Upgrade is mutually exclusive with ResetInstallation and Uninstall.'
+    }
+    if ($PSBoundParameters.ContainsKey('UpgradeFromInstallDirectory') -and -not $Upgrade) {
+        throw 'UpgradeFromInstallDirectory is valid only when Upgrade is supplied.'
     }
     if ($Uninstall -and $EventRecordId -ne 0) {
         throw 'Uninstall requires EventRecordId = 0 and cannot be combined with event processing.'
@@ -762,7 +870,7 @@ function Invoke-WdacToast {
         # Merely checking that a file exists leaves an older, incompatible copy
         # in Program Files and causes parameter binding to fail before it can run.
         if ($ResetInstallation) { Reset-WdacToastInstallation }
-        Install-WdacToast
+        if ($Upgrade) { Upgrade-WdacToastInstallation } else { Install-WdacToast }
         [void](Test-WdacToastConfiguration)
         Write-WdacToastLog -Message "Installation completed for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
         Write-WdacToastLog -Level WARN -Message 'EventRecordId is 0, so this invocation only installed or validated the components; it did not attempt to display a toast. Pass a valid Event ID 3077 record ID to test rendering.'
