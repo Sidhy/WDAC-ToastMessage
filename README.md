@@ -7,7 +7,11 @@
 The script has two entry paths:
 
 1. When run without an event record ID, it installs itself under `C:\Program Files\Company\WDACToast` and creates one event-triggered Scheduled Task assigned to the well-known INTERACTIVE SID (`S-1-5-4`).
-2. When an event fires while an interactive user is signed in, Task Scheduler supplies that interactive token and launches the renderer directly. The renderer creates the current user's toast application identity, retrieves the exact Event ID 3077 record, writes user-private diagnostics, applies duplicate suppression, and displays the toast.
+2. When an event fires while an interactive user is signed in, Task Scheduler runs
+   the action as a member of the INTERACTIVE group at `LeastPrivilege`. The
+   renderer creates that user's toast application identity, retrieves the exact
+   Event ID 3077 record, writes user-profile diagnostics, applies duplicate
+   suppression, and submits a toast to Windows.
 
 The application identity is created on demand in the renderer's `HKCU`, so a user who signs in after deployment needs no separate installation. A missing installation must be repaired by rerunning the deployment script elevated; a standard-user renderer never attempts an administrative repair.
 
@@ -21,6 +25,10 @@ The application identity is created on demand in the renderer's `HKCU`, so a use
 - Administrator rights for the initial installation under Program Files.
 - A code-signed production script permitted by the deployed WDAC policy. The Scheduled Task uses `-ExecutionPolicy AllSigned`.
 
+Event 3077 is emitted for an enforced App Control policy block. Audit-mode events
+use other IDs and do not trigger this task. See Microsoft's [App Control event ID
+reference](https://learn.microsoft.com/windows/security/application-security/application-control/windows-defender-application-control/operations/event-id-explanations).
+
 The task is not tied to the installer or a named user. Its group principal is the well-known INTERACTIVE SID, it uses `LeastPrivilege`, and its action directly invokes the signed renderer. No service account, stored password, user-token duplication, native session launcher, or execution-policy bypass is used.
 
 ## Configure
@@ -31,6 +39,13 @@ installation, the JSON file is copied beside the installed script under
 record ID, so subsequent edits to the installed JSON take effect on its next
 invocation. If the file is absent, the built-in defaults are used. Explicit
 command-line parameters override JSON values.
+
+The source JSON is copied only when it exists. Removing it from a later upgrade
+package does **not** delete a JSON file already installed in Program Files; use
+`-ResetInstallation` when intentionally returning to built-in defaults. Treat
+`InstallDirectory` and `TaskName` as installation settings and rerun installation
+after changing either one. The other settings are consumed by the renderer on
+each invocation.
 
 Edit the supplied JSON before deployment:
 
@@ -61,9 +76,28 @@ Available settings are:
   PNG/JPG path, `file://` URI, or HTTPS URI to override it, or an empty string to
   disable the image.
 - `InstallDirectory` and `TaskName` — optional deployment-specific names.
+- `DuplicateCooldownMinutes` — suppression window from `0` (disabled) through
+  `1440`; the default is five minutes.
+
+Command-line parameters take precedence over matching JSON properties:
+
+| Parameter | Purpose |
+| --- | --- |
+| `EventRecordId` | `0` installs; a positive record ID processes that exact 3077 event. |
+| `DuplicateCooldownMinutes` | Overrides the configured suppression window for this invocation. |
+| `SupportUri`, `ActionLabel`, `AppId`, `DisplayName`, `LogoPath` | Override notification behavior or branding. |
+| `InstallDirectory`, `TaskName` | Override machine installation names; use the same values consistently on later installation/reset commands. |
+| `ResetInstallation` | Removes and rebuilds the installation; valid only with `EventRecordId = 0` and only from a deployment copy outside the installed directory. |
+
+The script enables strict mode and stops on errors. A successful installation or
+suppressed duplicate exits `0`; an uncaught installation or rendering error is
+logged and exits `1`.
 
 Mutable notification state, operational logs, and per-event JSON diagnostics are
-stored in `%LOCALAPPDATA%\Company\WDACToast` for the user who receives the toast.
+stored in `%LOCALAPPDATA%\Company\WDACToast` for the account running that
+invocation. Event invocations therefore write to the user who receives the
+toast; an elevated or Intune installation writes its installation log beneath
+the administrator or SYSTEM profile instead.
 The script does not grant Authenticated Users access to a shared machine
 directory. Branding and signed program files remain under Program Files. The
 same configuration values can be supplied as command-line parameters during
@@ -92,6 +126,11 @@ the Program Files copy and re-registers the components, even when they already
 exist. This is required for upgrades: run the downloaded/deployment copy above,
 not `C:\Program Files\Company\WDACToast\Show-WDACToast.ps1`, and do not pass
 `EventRecordId` during installation.
+
+An installation invocation uses `EventRecordId = 0`. It installs and runs
+configuration checks, emits a warning that no toast was attempted, and then
+returns success unless an operation throws. Configuration-check warnings are
+diagnostic: their Boolean result is not an installation gate.
 
 For a normal update, run the new signed deployment copy with the same parameters;
 that replaces the installed script, configuration, and computer task. To
@@ -127,7 +166,10 @@ $installed = "$env:ProgramFiles\Company\WDACToast\Show-WDACToast.ps1"
 The result must be `True`. If it is `False`, the file at that exact path was not
 replaced; do not retry the event command against it.
 
-The production file must be signed before installation because the Scheduled Task invokes the installed copy with `AllSigned`:
+The production file must be signed before installation because the Scheduled Task invokes the installed copy with `AllSigned`. The signing certificate chain
+must also be trusted on target devices and the signer must be allowed by the
+deployed App Control policy. Sign the final file before packaging; modifying it
+after signing invalidates the signature:
 
 ```powershell
 $certificate = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1
@@ -145,6 +187,8 @@ Microsoft-Windows-CodeIntegrity/Operational
 Its value query passes `Event/System/EventRecordID` to the script. The collector then uses an XPath query containing both Event ID 3077 and the supplied record ID. Event data is parsed from XML rather than localized message text.
 
 Known field alternatives include the spaced names used by current events (`File Name` and `Process Name`) and unspaced names found on other provider versions.
+If several fields map to the same logical value, the first non-empty recognized
+field is used.
 
 The notification starts with a one-line security title, a two-line general
 message, and the blocked filename. Its structured detail section then labels the
@@ -156,11 +200,12 @@ The action row provides **More details**, **Dismiss**, and the configurable
 **Request Review** action. **More details** opens the user-private JSON diagnostic
 for the event, **Dismiss** closes the notification, and **Request Review** opens
 the configured HTTPS `SupportUri`.
-When those files are still
-available, Windows version metadata supplies the description, product,
-publisher, and version for both the blocked file and its caller. The toast also
-shows the WDAC status, validated signing level, policy, and event reference when
-available.
+When those files are still available, Windows version metadata supplies the
+description, product, publisher, and version for both the blocked file and its
+caller. That metadata, the raw WDAC status, signing levels, hashes, activity ID,
+provider, and event reference are written to the JSON diagnostic; they are not
+additional fields in the toast. The toast detail group contains only the blocked
+path, caller path, and policy name/version.
 
 The notification does not apply application-side maximum lengths to event
 values. It passes complete, XML-escaped values to wrapped adaptive text nodes so
@@ -190,8 +235,10 @@ Each event is written before the notification decision to:
 ```
 
 The JSON includes selected fields, all named `EventData` values, and the complete
-event XML. The directory inherits the user's profile ACL and is not shared with
-other signed-in users.
+event XML. The directory is created beneath the selected user's profile and uses
+the profile's inherited ACL. The script does not set a custom ACL. JSON and text
+logs have no automatic retention or size limit; manage them separately if your
+support or privacy policy requires retention limits.
 
 Operational activity and caught errors are appended to:
 
@@ -220,7 +267,13 @@ property before reading it; this avoids the `PSArgumentException` that
 Scheduled Task's interactive-user context, not the segregated administrator's
 HKCU hive.
 
-Notifications for the same lowercase file path are suppressed for five minutes by default. Every underlying event is still logged. Use `-DuplicateCooldownMinutes 0` to disable suppression or supply a value up to 1440 minutes.
+Notifications for the same lowercase file path are suppressed for five minutes
+by default. The comparison uses the event timestamp, not the task start time. If
+the event has no recognized file path, its record ID forms the key instead. Every
+underlying event is still logged before suppression. Use
+`-DuplicateCooldownMinutes 0` to disable suppression or supply a value up to 1440
+minutes. Suppression state older than seven days is pruned after a successful
+toast submission; this does not remove diagnostic JSON or the text log.
 
 ## Security properties
 
@@ -230,6 +283,114 @@ Notifications for the same lowercase file path are suppressed for five minutes b
 - The state file is replaced atomically, and Scheduled Task instances are queued to prevent concurrent state updates.
 - No execution-policy bypass is used.
 - Raw status codes remain in diagnostics; unvalidated status-to-text mappings are not presented to users.
+
+The task is queued rather than run concurrently, has a five-minute execution
+limit, does not start missed events later (`StartWhenAvailable` is false), and
+does not wake the device. The task and installed files are machine-wide; toast
+identity, preferences, duplicate state, and diagnostics are per user. A toast is
+best-effort UI, not proof that the user saw the block.
+
+## Deploy with Microsoft Intune
+
+Use a **Windows app (Win32)** for normal production deployment. It provides
+install/uninstall commands, requirements, detection rules, assignments, and
+supersedence. Microsoft documents the packaging flow in [Prepare Win32 app
+content](https://learn.microsoft.com/intune/intune-service/apps/apps-win32-prepare)
+and the available app settings in [Win32 app
+management](https://learn.microsoft.com/intune/intune-service/apps/apps-win32-app-management).
+
+### 1. Prepare the package
+
+1. Customize `WDACToast.json`; do not leave the example support URL.
+2. Code-sign `Show-WDACToast.ps1` with the production certificate after all
+   edits are complete.
+3. Put only `Show-WDACToast.ps1` and `WDACToast.json` in the source folder.
+4. Run the Microsoft Win32 Content Prep Tool and select
+   `Show-WDACToast.ps1` as the setup file. Upload the resulting `.intunewin`.
+
+Do not package an already-installed copy or user-profile logs. Deploy the signer
+trust and App Control allow policy before this app when those prerequisites are
+not already present.
+
+### 2. Configure the Win32 app
+
+Use these values for the default names in this repository:
+
+| Setting | Value |
+| --- | --- |
+| Install behavior | **System** |
+| Device restart behavior | **No specific action** |
+| Install command | `%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File .\Show-WDACToast.ps1` |
+| Uninstall command | See the command below |
+| Architecture requirement | 64-bit Windows 10 or Windows 11 |
+
+`Sysnative` makes the 32-bit Intune Management Extension start 64-bit Windows
+PowerShell on a 64-bit device. The install must run as **System**, not as the
+logged-on user, because it writes Program Files and registers a machine task.
+The registered task itself still runs at `LeastPrivilege` in the interactive
+user context; Intune's install context is not the toast's runtime context.
+
+Use this uninstall command for the repository defaults (put it on one line in
+Intune):
+
+```text
+%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy AllSigned -Command "Unregister-ScheduledTask -TaskName 'Company WDAC Block Notification' -Confirm:$false -ErrorAction SilentlyContinue; Remove-Item -LiteralPath (Join-Path $env:ProgramFiles 'Company\WDACToast') -Recurse -Force -ErrorAction SilentlyContinue"
+```
+
+If `TaskName` or `InstallDirectory` is customized, change both literals. The
+uninstall intentionally does not enumerate profiles or remove each user's HKCU
+identity, logs, or duplicate state. Removing other users' data would require
+additional privilege and profile-hive manipulation that this project avoids.
+
+### 3. Detection rule
+
+Use a **custom detection script**, run as 64-bit, so Intune checks both the file
+and task instead of only the directory:
+
+```powershell
+$scriptPath = Join-Path $env:ProgramFiles 'Company\WDACToast\Show-WDACToast.ps1'
+$task = Get-ScheduledTask -TaskName 'Company WDAC Block Notification' -ErrorAction SilentlyContinue
+
+if ((Test-Path -LiteralPath $scriptPath -PathType Leaf) -and
+    $null -ne $task -and
+    $task.Principal.GroupId -eq 'S-1-5-4' -and
+    $task.Principal.RunLevel -eq 'Limited' -and
+    @($task.Actions).Count -eq 1 -and
+    [string]$task.Actions[0].Arguments -like "*$scriptPath*" -and
+    [string]$task.Actions[0].Arguments -like '*-ExecutionPolicy AllSigned*') {
+    Write-Output 'WDAC toast is installed.'
+    exit 0
+}
+
+exit 1
+```
+
+For an Intune custom detection rule, detection requires exit code `0` **and**
+text on standard output. Update the names in the script when configuration uses
+custom deployment settings.
+
+### 4. Assign, update, and validate
+
+- Assign the app to a pilot **device** group first, then broaden the required
+  assignment after validation. Device assignment matches this machine-wide
+  installation better than installing separately for every user.
+- Use Win32 app supersedence or replace the package for updates. Keep the same
+  `AppId`, task name, and installation directory unless intentionally migrating
+  them.
+- Validate installation status in Intune, then perform the standard-user test in
+  [Windows test procedure](#windows-test-procedure). Installation by the Intune
+  service cannot display a toast because it is not the interactive renderer.
+- If the task is installed but never renders, verify that a standard user can
+  read the Code Integrity Operational log and review the user's local log.
+
+Microsoft also supports deploying PowerShell scripts through the [Intune
+Management Extension](https://learn.microsoft.com/intune/intune-service/apps/intune-management-extension)
+and documents its [PowerShell script
+settings](https://learn.microsoft.com/intune/intune-service/apps/powershell-scripts).
+That approach can install this project by running the signed script in the system
+context with the 64-bit-host option enabled, but it has no Win32-app uninstall or
+detection lifecycle and is therefore better suited to a pilot or one-time
+bootstrap than ongoing application management.
 
 The toast and local JSON are supplementary user and support signals. Retain the native Code Integrity log or centrally collected WDAC telemetry as the authoritative security record.
 
