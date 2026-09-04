@@ -41,6 +41,9 @@ required_collector_fragments = [
     "[switch]$Uninstall",
     "[switch]$CleanupLogs",
     "[switch]$Upgrade",
+    "[ValidateSet('AllSigned', 'Bypass')]",
+    "[string]$ExecutionPolicy = 'AllSigned'",
+    "ExecutionPolicy in '$ConfigurationFile' must be either AllSigned or Bypass",
     "function Upgrade-WdacToastInstallation",
     "$InstallationMarkerPath = 'HKLM:\\Software\\Company\\WDACToast'",
     "function Get-PreviousWdacToastInstallations",
@@ -106,7 +109,6 @@ for fragment in required_collector_fragments:
 
 assert "$env\\:ProgramData" not in collector
 assert "$Node.'#text'" not in collector
-assert "ExecutionPolicy Bypass" not in collector
 assert "S-1-5-18" not in collector
 assert "WTSQueryUserToken" not in collector
 assert "DuplicateTokenEx" not in collector
@@ -237,6 +239,7 @@ xml = xml.replace("$EscapedLogoPath", r"C:\Branding\security.png")
 xml = xml.replace("$EscapedSupportUri", "https://support.example.test/details")
 xml = xml.replace("$EscapedInstallDirectory", r"C:\Program Files\Company\WDACToast")
 xml = xml.replace("$EscapedTaskName", "Company WDAC Block Notification")
+xml = xml.replace("$ExecutionPolicy", "Bypass")
 xml = xml.replace("`$(EventRecordID)", "123")
 ET.fromstring(xml)
 task = ET.fromstring(xml)
@@ -247,9 +250,12 @@ assert task.find(".//t:UserId", namespaces=ns) is None
 assert task.find(".//t:LogonType", namespaces=ns) is None
 assert "-Broker" not in task.findtext(".//t:Arguments", namespaces=ns)
 assert "InteractiveToken" not in xml
+assert "-ExecutionPolicy Bypass" in task.findtext(".//t:Arguments", namespaces=ns)
+assert task.findtext(".//t:Arguments", namespaces=ns).endswith("-ExecutionPolicy Bypass")
 
 parsed_configuration = json.loads(configuration)
 assert parsed_configuration["ActionLabel"] == "Request Review"
+assert parsed_configuration["ExecutionPolicy"] == "AllSigned"
 assert parsed_configuration["LogoPath"] == r"C:\Program Files\Company\WDACToast\MicrosoftDefenderShield.png"
 assert "ProgramData" not in parsed_configuration["LogoPath"]
 

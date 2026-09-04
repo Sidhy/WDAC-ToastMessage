@@ -26,7 +26,9 @@ The application identity is created on demand in the renderer's `HKCU`, so a use
   operations manage an HKLM installation marker, a machine Scheduled Task, and
   Program Files; run them from an elevated Windows PowerShell 5.1 session (or
   an administrative deployment context such as Intune running as SYSTEM).
-- A code-signed production script permitted by the deployed WDAC policy. The Scheduled Task uses `-ExecutionPolicy AllSigned`.
+- A production script permitted by the deployed WDAC policy. The Scheduled Task
+  uses `-ExecutionPolicy AllSigned` by default; installations that rely on WDAC
+  or another trust control can explicitly select `Bypass` instead.
 
 Event 3077 is emitted for an enforced App Control policy block. Audit-mode events
 use other IDs and do not trigger this task. See Microsoft's [App Control event ID
@@ -38,10 +40,12 @@ The task is not tied to the installer or a named user. Its group principal is th
 
 Configuration is read from `WDACToast.json` beside `Show-WDACToast.ps1`. During
 installation, the JSON file is copied beside the installed script under
-`C:\Program Files\Company\WDACToast`. The Scheduled Task supplies only the event
-record ID, so subsequent edits to the installed JSON take effect on its next
-invocation. If the file is absent, the built-in defaults are used. Explicit
-command-line parameters override JSON values.
+`C:\Program Files\Company\WDACToast`. The Scheduled Task supplies the event
+record ID and its installed execution-policy choice, so subsequent edits to the
+other values in the installed JSON take effect on its next invocation. Changing
+`ExecutionPolicy` requires reinstalling or upgrading the task. If the file is
+absent, the built-in defaults are used. Explicit command-line parameters
+override JSON values.
 
 Static notification text is read from `WDACToast.Localization.xml`, which is
 also copied beside the installed script. At render time the script reads the
@@ -77,6 +81,7 @@ Edit the supplied JSON before deployment:
   "InstallDirectory": "C:\\Program Files\\Company\\WDACToast",
   "LogoPath": "C:\\Program Files\\Company\\WDACToast\\MicrosoftDefenderShield.png",
   "TaskName": "Company WDAC Block Notification",
+  "ExecutionPolicy": "AllSigned",
   "DuplicateCooldownMinutes": 5
 }
 ```
@@ -95,6 +100,9 @@ Available settings are:
   PNG/JPG path, `file://` URI, or HTTPS URI to override it, or an empty string to
   disable the image.
 - `InstallDirectory` and `TaskName` — optional deployment-specific names.
+- `ExecutionPolicy` — execution policy for the Scheduled Task action. Valid
+  values are `AllSigned` (the default) and `Bypass`. Select `Bypass` only when
+  script trust is enforced by WDAC or another organizational control.
 - `DuplicateCooldownMinutes` — suppression window from `0` (disabled) through
   `1440`; the default is five minutes.
 
@@ -106,6 +114,7 @@ Command-line parameters take precedence over matching JSON properties:
 | `DuplicateCooldownMinutes` | Overrides the configured suppression window for this invocation. |
 | `SupportUri`, `ActionLabel`, `AppId`, `DisplayName`, `LogoPath` | Override notification behavior or branding. |
 | `InstallDirectory`, `TaskName` | Override machine installation names; use the same values consistently on later installation/reset commands. |
+| `ExecutionPolicy` | Sets the installed Scheduled Task action to `AllSigned` (default) or `Bypass`. |
 | `Upgrade` | Transactionally replaces an existing installation; valid only with `EventRecordId = 0` and mutually exclusive with reset and uninstall. |
 | `UpgradeFromInstallDirectory` | Legacy fallback for `Upgrade`: identifies an old directory only when no machine installation marker exists. |
 | `ResetInstallation` | Removes and rebuilds the installation; valid only with `EventRecordId = 0` and only from a deployment copy outside the installed directory. |
@@ -138,6 +147,19 @@ who performs installation does not become the task owner or notification target:
     -LogoPath 'C:\Program Files\Contoso\Branding\security.png' `
     -SupportUri 'https://support.contoso.example/wdac-review'
 ```
+
+To register the Scheduled Task with `Bypass`, either set `ExecutionPolicy` to
+`Bypass` in `WDACToast.json` or pass it explicitly during installation:
+
+```powershell
+.\Show-WDACToast.ps1 -ExecutionPolicy Bypass
+```
+
+This option controls the policy argument on the **installed task**. It cannot
+change the execution policy used to start the installer itself; choose that in
+the parent `powershell.exe` command when required. Rerun installation (or use
+`-Upgrade` for an intentional update) after changing this setting so the task
+is re-registered.
 
 Do not install once per user or create user-specific task names. The INTERACTIVE
 group principal lets Task Scheduler select a signed-in interactive token instead
@@ -464,6 +486,11 @@ PowerShell on a 64-bit device. The install must run as **System**, not as the
 logged-on user, because it writes Program Files and registers a machine task.
 The registered task itself still runs at `LeastPrivilege` in the interactive
 user context; Intune's install context is not the toast's runtime context.
+The displayed install command uses `AllSigned` to launch the installer, while
+the `ExecutionPolicy` script parameter controls the subsequently registered
+task. For example, append `-ExecutionPolicy Bypass` after the script path when
+the task should use Bypass. If the installer itself must also run under Bypass,
+change the earlier `powershell.exe -ExecutionPolicy` argument separately.
 
 Use the signed deployment script from the packaged Win32 app for uninstall (put
 it on one line in Intune):
@@ -516,7 +543,8 @@ exit 1
 
 For an Intune custom detection rule, detection requires exit code `0` **and**
 text on standard output. Update the names in the script when configuration uses
-custom deployment settings.
+custom deployment settings. If `ExecutionPolicy` is configured as `Bypass`,
+change the final action check to `*-ExecutionPolicy Bypass*`.
 
 ### 4. Assign, update, and validate
 
