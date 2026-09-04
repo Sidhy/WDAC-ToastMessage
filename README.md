@@ -22,7 +22,10 @@ The application identity is created on demand in the renderer's `HKCU`, so a use
 - A signed-in interactive user session with the Windows Push Notifications user service available. Do not invoke the renderer with PowerShell 7 (`pwsh.exe`) or as SYSTEM: PowerShell 7 does not provide the Windows PowerShell 5.1 WinRT type projection used by `Windows.UI.Notifications`.
 - Notifications enabled for the user in Windows Settings (and not disabled by organizational policy). The script reports an explicit error when `HKCU\Software\Microsoft\Windows\CurrentVersion\PushNotifications\ToastEnabled` is present and set to `0`; it does not override that preference or policy.
 - Permission to read `Microsoft-Windows-CodeIntegrity/Operational` in the target user context.
-- Administrator rights for the initial installation under Program Files.
+- Administrator rights for every install, upgrade, reset, and uninstall. These
+  operations manage an HKLM installation marker, a machine Scheduled Task, and
+  Program Files; run them from an elevated Windows PowerShell 5.1 session (or
+  an administrative deployment context such as Intune running as SYSTEM).
 - A code-signed production script permitted by the deployed WDAC policy. The Scheduled Task uses `-ExecutionPolicy AllSigned`.
 
 Event 3077 is emitted for an enforced App Control policy block. Audit-mode events
@@ -104,7 +107,7 @@ Command-line parameters take precedence over matching JSON properties:
 | `SupportUri`, `ActionLabel`, `AppId`, `DisplayName`, `LogoPath` | Override notification behavior or branding. |
 | `InstallDirectory`, `TaskName` | Override machine installation names; use the same values consistently on later installation/reset commands. |
 | `Upgrade` | Transactionally replaces an existing installation; valid only with `EventRecordId = 0` and mutually exclusive with reset and uninstall. |
-| `UpgradeFromInstallDirectory` | With `Upgrade`, identifies the old directory when migrating to a new `InstallDirectory`. |
+| `UpgradeFromInstallDirectory` | Legacy fallback for `Upgrade`: identifies an old directory only when no machine installation marker exists. |
 | `ResetInstallation` | Removes and rebuilds the installation; valid only with `EventRecordId = 0` and only from a deployment copy outside the installed directory. |
 | `Uninstall` | Removes the requested and installed-configuration task names, then the installation directory; valid only with `EventRecordId = 0` and mutually exclusive with `ResetInstallation`. |
 | `CleanupLogs` | With `Uninstall`, also removes `%LOCALAPPDATA%\Company\WDACToast` for the account running the command; it cannot be used by itself. |
@@ -149,6 +152,24 @@ rolled back. Run the downloaded/deployment copy, not
 `C:\Program Files\Company\WDACToast\Show-WDACToast.ps1`, and do not pass a
 positive `EventRecordId` during installation or upgrade.
 
+Successful installation records the active `InstallDirectory`, `TaskName`, and
+`AppId` as string values under the machine-wide marker
+`HKLM:\Software\Company\WDACToast`. The installer reads this marker before it
+resolves the incoming package's installation target. Consequently, a normal
+install or explicit upgrade can migrate names safely: it registers and verifies
+the replacement task, removes a differently named former task, removes a former
+installation directory only when it differs from the new directory, and writes
+the new marker last. A failed replacement does not advance the marker.
+
+Machines upgraded from a release that predates the marker are discovered by
+checking both the repository default
+`C:\Program Files\Company\WDACToast` and the currently configured
+`InstallDirectory` for an installed `WDACToast.json`. `-UpgradeFromInstallDirectory`
+remains available to identify a nonstandard legacy location that neither check
+can discover. Once installation succeeds, the marker becomes authoritative for
+future migrations. Uninstall uses the marker (plus the legacy fallbacks),
+removes the recorded task and directories, and finally removes the marker.
+
 An installation invocation uses `EventRecordId = 0`. It installs and runs
 configuration checks, emits a warning that no toast was attempted, and then
 returns success unless an operation throws. Configuration-check warnings are
@@ -166,7 +187,7 @@ parameters and the explicit upgrade switch:
     -Verbose
 ```
 
-Upgrade reads the installed `WDACToast.json` before replacing files. A same-name
+Upgrade reads the machine marker and installed `WDACToast.json` before replacing files. A same-name
 task is replaced with `Register-ScheduledTask -Force`; when `TaskName` changes,
 the replacement is registered first and the recorded old task is then removed.
 The operation verifies that exactly one new-name task remains and that its action
@@ -176,9 +197,10 @@ task; the terminating error explicitly reports any incomplete rollback.
 
 For a task-name migration, put the new `TaskName` in the deployment JSON (or pass
 it on the command line) and use `-Upgrade`; do not manually delete the old task.
-For an installation-directory migration, provide both the new directory and the
-old directory so the installer can read the prior identity and remove the old
-files only after successful verification:
+For a marked installation-directory migration, provide the new directory; the
+installer obtains the former directory from HKLM and removes its files only
+after successful verification. `UpgradeFromInstallDirectory` is shown below
+only for an unmarked legacy installation in a nonstandard location:
 
 ```powershell
 & 'C:\Path\To\Current\Show-WDACToast.ps1' `

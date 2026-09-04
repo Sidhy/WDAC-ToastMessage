@@ -41,6 +41,12 @@ required_collector_fragments = [
     "[switch]$CleanupLogs",
     "[switch]$Upgrade",
     "function Upgrade-WdacToastInstallation",
+    "$InstallationMarkerPath = 'HKLM:\\Software\\Company\\WDACToast'",
+    "function Get-PreviousWdacToastInstallations",
+    "function Set-WdacToastInstallationMarker",
+    "New-ItemProperty -Path $InstallationMarkerPath -Name InstallDirectory",
+    "New-ItemProperty -Path $InstallationMarkerPath -Name TaskName",
+    "New-ItemProperty -Path $InstallationMarkerPath -Name AppId",
     "Upgrade is mutually exclusive with ResetInstallation and Uninstall",
     "Upgrade requires EventRecordId = 0",
     "Register-ScheduledTask -TaskName $PreviousTaskName -Xml $PreviousTaskXml -Force",
@@ -48,7 +54,7 @@ required_collector_fragments = [
     "CleanupLogs is valid only when Uninstall is supplied",
     "Unregister-ScheduledTask -TaskName $RegisteredTaskName -Confirm:$false -ErrorAction Stop",
     'Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -eq $RegisteredTaskName',
-    "Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction Stop",
+    "Remove-Item -LiteralPath $RegisteredInstallDirectory -Recurse -Force -ErrorAction Stop",
     "Remove-Item -LiteralPath $StateDirectory -Recurse -Force -ErrorAction Stop",
     "Unregister-ScheduledTask",
     "ResetInstallation cannot be combined with EventRecordId",
@@ -123,8 +129,12 @@ assert "catch {\n    $Failure = $_" in collector
 assert "exit 1" in collector
 uninstall_branch = collector.index("function Uninstall-WdacToast")
 installed_config_read = collector.index("Get-Content -LiteralPath $InstalledConfigurationFile -Raw -ErrorAction Stop", uninstall_branch)
-install_directory_removal = collector.index("Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction Stop", uninstall_branch)
+install_directory_removal = collector.index("Remove-Item -LiteralPath $RegisteredInstallDirectory -Recurse -Force -ErrorAction Stop", uninstall_branch)
 assert installed_config_read < install_directory_removal, "uninstall must read installed configuration before deleting files"
+marker_read = collector.index("Get-ItemProperty -LiteralPath $InstallationMarkerPath")
+configuration_read = collector.index("Get-Content -LiteralPath $ConfigurationFile -Raw")
+assert marker_read < configuration_read, "the machine marker must be read before deployment configuration resolves the new target"
+assert "@($RepositoryDefaultInstallDirectory, $InstallDirectory)" in collector
 
 def function_body(name: str) -> str:
     """Return a top-level PowerShell function through the next declaration."""
@@ -132,6 +142,7 @@ def function_body(name: str) -> str:
     next_function = collector.find("\nfunction ", start + 1)
     return collector[start : next_function if next_function != -1 else len(collector)]
 
+assert "Remove-Item -LiteralPath $InstallationMarkerPath" in function_body("Uninstall-WdacToast")
 
 upgrade_body = function_body("Upgrade-WdacToastInstallation")
 upgrade_read = upgrade_body.index("Get-Content -LiteralPath $PreviousConfigurationFile -Raw -ErrorAction Stop")
@@ -145,6 +156,18 @@ verification = upgrade_body.index("$IntendedTasks.Count -ne 1")
 assert old_name_guard < old_name_removal < verification, "renamed upgrades must remove and verify the old task"
 assert "[string]$Action.Arguments -notlike \"*${InstalledScript}*\"" in upgrade_body
 assert "Rollback restored the prior files and task" in upgrade_body
+upgrade_marker_write = upgrade_body.index("Set-WdacToastInstallationMarker")
+upgrade_old_directory_removal = upgrade_body.index("Remove-Item -LiteralPath $RecordedPreviousDirectory")
+assert verification < upgrade_old_directory_removal < upgrade_marker_write, (
+    "upgrade must verify replacement, remove the former directory, and only then update the marker"
+)
+
+install_body = function_body("Install-WdacToast")
+install_register = install_body.index("Register-ScheduledTask -TaskName $TaskName")
+install_old_task_removal = install_body.index("Unregister-ScheduledTask -TaskName $PreviousInstallation.TaskName")
+install_old_directory_removal = install_body.index("Remove-Item -LiteralPath $PreviousInstallation.InstallDirectory")
+install_marker_write = install_body.index("Set-WdacToastInstallationMarker")
+assert install_register < install_old_task_removal < install_old_directory_removal < install_marker_write
 
 
 for cleanup_function in ("Reset-WdacToastInstallation", "Uninstall-WdacToast"):
@@ -159,6 +182,9 @@ for cleanup_function in ("Reset-WdacToastInstallation", "Uninstall-WdacToast"):
 readme = (ROOT / "README.md").read_text(encoding="utf-8")
 assert '-Command "Unregister-ScheduledTask' not in readme
 assert "-File .\\Show-WDACToast.ps1 -Uninstall" in readme
+assert "HKLM:\\Software\\Company\\WDACToast" in readme
+assert "repository default" in readme and "currently configured" in readme
+assert "Administrator rights for every install, upgrade, reset, and uninstall" in readme
 install_branch = collector.index("if ($EventRecordId -eq 0) {")
 repair_branch = collector.index("if (-not (Test-WdacToastInstalled))", install_branch)
 assert install_branch < repair_branch, "explicit installation must run before event-only repair"

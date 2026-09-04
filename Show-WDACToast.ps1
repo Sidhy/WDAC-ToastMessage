@@ -65,6 +65,12 @@ $DefaultConfiguration = [ordered]@{
     DuplicateCooldownMinutes = 5
 }
 $ScriptDirectory = Split-Path -Parent $PSCommandPath
+$InstallationMarkerPath = 'HKLM:\Software\Company\WDACToast'
+$RepositoryDefaultInstallDirectory = "$env:ProgramFiles\Company\WDACToast"
+# Capture the machine identity before the deployment configuration is allowed to
+# select a new target. This makes directory/task renames discoverable even when
+# the new package no longer mentions the old values.
+$InstallationMarker = Get-ItemProperty -LiteralPath $InstallationMarkerPath -ErrorAction SilentlyContinue
 $ConfigurationFile = Join-Path $ScriptDirectory 'WDACToast.json'
 $LocalizationFile = Join-Path $ScriptDirectory 'WDACToast.Localization.xml'
 $LogoWasConfigured = $PSBoundParameters.ContainsKey('LogoPath')
@@ -183,6 +189,64 @@ function Get-OptionalRegistryValue {
     $Property = $Item.PSObject.Properties[$Name]
     if ($null -eq $Property) { return $null }
     return $Property.Value
+}
+
+function Get-PreviousWdacToastInstallations {
+    [CmdletBinding()]
+    param()
+
+    $Installations = @()
+    $MarkerHasIdentity = $null -ne $InstallationMarker -and
+        $null -ne $InstallationMarker.PSObject.Properties['InstallDirectory'] -and
+        $null -ne $InstallationMarker.PSObject.Properties['TaskName'] -and
+        $null -ne $InstallationMarker.PSObject.Properties['AppId'] -and
+        -not [string]::IsNullOrWhiteSpace([string]$InstallationMarker.InstallDirectory) -and
+        -not [string]::IsNullOrWhiteSpace([string]$InstallationMarker.TaskName) -and
+        -not [string]::IsNullOrWhiteSpace([string]$InstallationMarker.AppId)
+    if ($MarkerHasIdentity) {
+        $Installations += [pscustomobject]@{
+            InstallDirectory = [string]$InstallationMarker.InstallDirectory
+            TaskName = [string]$InstallationMarker.TaskName
+            AppId = [string]$InstallationMarker.AppId
+            Source = 'machine installation marker'
+        }
+        return @($Installations)
+    }
+
+    # Legacy releases had no machine marker. Inspect both the repository's
+    # historical default and the directory selected by this deployment.
+    foreach ($CandidateDirectory in @($RepositoryDefaultInstallDirectory, $InstallDirectory) | Select-Object -Unique) {
+        $Candidate = [ordered]@{
+            InstallDirectory = [string]$CandidateDirectory
+            TaskName = [string]$DefaultConfiguration.TaskName
+            AppId = [string]$DefaultConfiguration.AppId
+            Source = 'legacy installed configuration'
+        }
+        $CandidateConfigurationFile = Join-Path $CandidateDirectory 'WDACToast.json'
+        $CandidateScript = Join-Path $CandidateDirectory 'Show-WDACToast.ps1'
+        if (-not (Test-Path -LiteralPath $CandidateConfigurationFile -PathType Leaf) -and
+            -not (Test-Path -LiteralPath $CandidateScript -PathType Leaf)) { continue }
+        if (Test-Path -LiteralPath $CandidateConfigurationFile -PathType Leaf) {
+            try {
+                $LegacyConfiguration = Get-Content -LiteralPath $CandidateConfigurationFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                if (-not [string]::IsNullOrWhiteSpace([string]$LegacyConfiguration.InstallDirectory)) { $Candidate.InstallDirectory = [string]$LegacyConfiguration.InstallDirectory }
+                if (-not [string]::IsNullOrWhiteSpace([string]$LegacyConfiguration.TaskName)) { $Candidate.TaskName = [string]$LegacyConfiguration.TaskName }
+                if (-not [string]::IsNullOrWhiteSpace([string]$LegacyConfiguration.AppId)) { $Candidate.AppId = [string]$LegacyConfiguration.AppId }
+            }
+            catch {
+                Write-WdacToastLog -Level WARN -Message "Could not read legacy configuration '$CandidateConfigurationFile': $($_.Exception.Message)"
+            }
+        }
+        $Installations += [pscustomobject]$Candidate
+    }
+    return @($Installations)
+}
+
+function Set-WdacToastInstallationMarker {
+    New-Item -Path $InstallationMarkerPath -Force -ErrorAction Stop | Out-Null
+    New-ItemProperty -Path $InstallationMarkerPath -Name InstallDirectory -Value $InstallDirectory -PropertyType String -Force -ErrorAction Stop | Out-Null
+    New-ItemProperty -Path $InstallationMarkerPath -Name TaskName -Value $TaskName -PropertyType String -Force -ErrorAction Stop | Out-Null
+    New-ItemProperty -Path $InstallationMarkerPath -Name AppId -Value $AppId -PropertyType String -Force -ErrorAction Stop | Out-Null
 }
 
 function Get-WdacToastStrings {
@@ -336,6 +400,9 @@ function Test-WdacToastInstalled {
 }
 
 function Install-WdacToast {
+    param([switch]$DeferMigration)
+
+    $PreviousInstallations = @(Get-PreviousWdacToastInstallations)
     $SourceScript = $PSCommandPath
     if ([string]::IsNullOrWhiteSpace($SourceScript) -or -not (Test-Path -LiteralPath $SourceScript)) {
         throw 'The script must be run from a saved .ps1 file before it can install itself.'
@@ -409,6 +476,32 @@ function Install-WdacToast {
 
     Register-ScheduledTask -TaskName $TaskName -Xml $TaskXml -Force | Out-Null
     Write-WdacToastLog -Message "Registered Scheduled Task '$TaskName' for the well-known INTERACTIVE group (S-1-5-4) at least privilege."
+
+    if (-not $DeferMigration) {
+        $RegisteredTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+        if ($null -eq $RegisteredTask) { throw "Scheduled Task '$TaskName' was not registered successfully." }
+        foreach ($PreviousInstallation in $PreviousInstallations) {
+            if (-not [string]::IsNullOrWhiteSpace($PreviousInstallation.TaskName) -and
+                -not [string]::Equals($PreviousInstallation.TaskName, $TaskName, [StringComparison]::OrdinalIgnoreCase)) {
+                if ($null -ne (Get-ScheduledTask -TaskName $PreviousInstallation.TaskName -ErrorAction SilentlyContinue)) {
+                    Unregister-ScheduledTask -TaskName $PreviousInstallation.TaskName -Confirm:$false -ErrorAction Stop
+                }
+                if ($null -ne (Get-ScheduledTask -TaskName $PreviousInstallation.TaskName -ErrorAction SilentlyContinue)) {
+                    throw "Previous Scheduled Task '$($PreviousInstallation.TaskName)' is still registered."
+                }
+            }
+        }
+        foreach ($PreviousInstallation in $PreviousInstallations) {
+            if (-not [string]::IsNullOrWhiteSpace($PreviousInstallation.InstallDirectory) -and
+                -not [string]::Equals($PreviousInstallation.InstallDirectory, $InstallDirectory, [StringComparison]::OrdinalIgnoreCase) -and
+                (Test-Path -LiteralPath $PreviousInstallation.InstallDirectory)) {
+                Remove-Item -LiteralPath $PreviousInstallation.InstallDirectory -Recurse -Force -ErrorAction Stop
+            }
+        }
+        # This is the commit record: never advertise the new identity until the
+        # task replacement and old-directory cleanup have both succeeded.
+        Set-WdacToastInstallationMarker
+    }
 }
 
 function Upgrade-WdacToastInstallation {
@@ -416,22 +509,39 @@ function Upgrade-WdacToastInstallation {
         throw "Upgrade must be run from the new deployment copy, not '$InstalledScript'."
     }
 
-    $PreviousDirectory = if ($PSBoundParameters.ContainsKey('UpgradeFromInstallDirectory')) {
+    $DetectedInstallations = @(Get-PreviousWdacToastInstallations)
+    $MarkedInstallation = @($DetectedInstallations | Where-Object Source -eq 'machine installation marker' | Select-Object -First 1)
+    $PreviousDirectory = if ($MarkedInstallation.Count -gt 0) {
+        [string]$MarkedInstallation[0].InstallDirectory
+    }
+    elseif ($PSBoundParameters.ContainsKey('UpgradeFromInstallDirectory')) {
         $UpgradeFromInstallDirectory
     }
     else {
-        $InstallDirectory
+        $LegacyInstallation = @($DetectedInstallations | Where-Object {
+            Test-Path -LiteralPath (Join-Path $_.InstallDirectory 'WDACToast.json') -PathType Leaf
+        } | Select-Object -First 1)
+        if ($LegacyInstallation.Count -gt 0) { [string]$LegacyInstallation[0].InstallDirectory } else { $InstallDirectory }
     }
     $PreviousConfigurationFile = Join-Path $PreviousDirectory 'WDACToast.json'
-    if (-not (Test-Path -LiteralPath $PreviousConfigurationFile -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $PreviousConfigurationFile -PathType Leaf) -and $MarkedInstallation.Count -eq 0) {
         throw "Upgrade could not find the prior installed configuration at '$PreviousConfigurationFile'. Use UpgradeFromInstallDirectory when migrating directories."
     }
 
     # Capture the complete prior configuration (including future identity
     # properties), as well as the identity values used by this version, before
     # Install-WdacToast overwrites any destination file.
-    $PreviousConfiguration = Get-Content -LiteralPath $PreviousConfigurationFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    $PreviousTaskName = [string]$PreviousConfiguration.TaskName
+    $PreviousConfiguration = if (Test-Path -LiteralPath $PreviousConfigurationFile -PathType Leaf) {
+        Get-Content -LiteralPath $PreviousConfigurationFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    }
+    else {
+        [pscustomobject]@{
+            TaskName = [string]$MarkedInstallation[0].TaskName
+            InstallDirectory = [string]$MarkedInstallation[0].InstallDirectory
+            AppId = [string]$MarkedInstallation[0].AppId
+        }
+    }
+    $PreviousTaskName = if ($MarkedInstallation.Count -gt 0) { [string]$MarkedInstallation[0].TaskName } else { [string]$PreviousConfiguration.TaskName }
     $RecordedPreviousDirectory = [string]$PreviousConfiguration.InstallDirectory
     if ([string]::IsNullOrWhiteSpace($PreviousTaskName) -or [string]::IsNullOrWhiteSpace($RecordedPreviousDirectory)) {
         throw "Prior installed configuration '$PreviousConfigurationFile' must contain TaskName and InstallDirectory."
@@ -454,7 +564,7 @@ function Upgrade-WdacToastInstallation {
 
     try {
         # Install uses Register-ScheduledTask -Force, replacing a same-name task.
-        Install-WdacToast
+        Install-WdacToast -DeferMigration
 
         if (-not [string]::Equals($PreviousTaskName, $TaskName, [StringComparison]::OrdinalIgnoreCase)) {
             Unregister-ScheduledTask -TaskName $PreviousTaskName -Confirm:$false -ErrorAction Stop
@@ -472,9 +582,10 @@ function Upgrade-WdacToastInstallation {
             throw "Upgrade verification found that Scheduled Task '$TaskName' does not point to '$InstalledScript'."
         }
 
-        if (-not [string]::Equals($PreviousDirectory, $InstallDirectory, [StringComparison]::OrdinalIgnoreCase)) {
-            Remove-Item -LiteralPath $PreviousDirectory -Recurse -Force -ErrorAction Stop
+        if (-not [string]::Equals($RecordedPreviousDirectory, $InstallDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $RecordedPreviousDirectory -Recurse -Force -ErrorAction Stop
         }
+        Set-WdacToastInstallationMarker
         Write-WdacToastLog -Message "Verified upgraded Scheduled Task '$TaskName' points to '$InstalledScript' and no previous task remains."
     }
     catch {
@@ -541,7 +652,9 @@ function Uninstall-WdacToast {
     }
 
     $Failures = [System.Collections.Generic.List[string]]::new()
-    $TaskNames = @($TaskName)
+    $PreviousInstallations = @(Get-PreviousWdacToastInstallations)
+    $TaskNames = @($TaskName) + @($PreviousInstallations | ForEach-Object TaskName)
+    $InstallationDirectories = @($InstallDirectory) + @($PreviousInstallations | ForEach-Object InstallDirectory)
     $InstalledConfigurationFile = Join-Path $InstallDirectory 'WDACToast.json'
 
     # Read the installed configuration before removing either tasks or files.
@@ -581,16 +694,28 @@ function Uninstall-WdacToast {
 
     # Attempt file cleanup only after every requested/recorded task name has
     # been processed, even when one of the task operations failed.
-    try {
-        if (Test-Path -LiteralPath $InstallDirectory) {
-            Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction Stop
+    foreach ($RegisteredInstallDirectory in @($InstallationDirectories | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        try {
+            if (Test-Path -LiteralPath $RegisteredInstallDirectory) {
+                Remove-Item -LiteralPath $RegisteredInstallDirectory -Recurse -Force -ErrorAction Stop
+            }
+            if (Test-Path -LiteralPath $RegisteredInstallDirectory) {
+                throw "Installation directory '$RegisteredInstallDirectory' still exists."
+            }
         }
-        if (Test-Path -LiteralPath $InstallDirectory) {
-            throw "Installation directory '$InstallDirectory' still exists."
+        catch {
+            $Message = "Failed to remove or verify installation directory '$RegisteredInstallDirectory': $($_.Exception.Message)"
+            $Failures.Add($Message)
+            Write-Warning $Message
         }
     }
+
+    try {
+        Remove-Item -LiteralPath $InstallationMarkerPath -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $InstallationMarkerPath) { throw "Installation marker '$InstallationMarkerPath' still exists." }
+    }
     catch {
-        $Message = "Failed to remove or verify installation directory '$InstallDirectory': $($_.Exception.Message)"
+        $Message = "Failed to remove or verify installation marker '$InstallationMarkerPath': $($_.Exception.Message)"
         $Failures.Add($Message)
         Write-Warning $Message
     }
