@@ -40,6 +40,22 @@ record ID, so subsequent edits to the installed JSON take effect on its next
 invocation. If the file is absent, the built-in defaults are used. Explicit
 command-line parameters override JSON values.
 
+Static notification text is read from `WDACToast.Localization.xml`, which is
+also copied beside the installed script. At render time the script reads the
+signed-in user's ordered Windows display-language preferences, selects an exact
+BCP-47 match first, then a matching base language, and finally English when no
+configured language matches. The selected BCP-47 tag is emitted on the
+`ToastGeneric` binding's standard `lang` attribute so Windows uses the proper
+font and text shaping.
+
+The supplied resources include English (`en`), Italian (`it-IT`), Dutch
+(`nl-NL`), German (`de-DE`), French (`fr-FR`), Ukrainian (`uk-UA`), Danish
+(`da-DK`), Spanish for Spain and Argentina (`es-ES`, `es-AR`), and Portuguese
+for Portugal and Brazil (`pt-PT`, `pt-BR`). Keep the English entry because it is
+the configured fallback. Every language entry must contain all string names
+present in the English entry. A custom `ActionLabel` remains unchanged;
+the default **Request Review** label is localized with the rest of the toast.
+
 The source JSON is copied only when it exists. Removing it from a later upgrade
 package does **not** delete a JSON file already installed in Program Files; use
 `-ResetInstallation` when intentionally returning to built-in defaults. Treat
@@ -195,6 +211,8 @@ message, and the blocked filename. Its structured detail section then labels the
 blocked application path, the calling application path, and the blocking policy
 name and version. Missing event values are displayed as **Not provided**, so the
 review format remains consistent across Code Integrity provider versions.
+All of this static text, including **Unknown file**, **Not provided**, detail
+labels, and built-in action labels, comes from the selected language entry.
 
 The action row provides **More details**, **Dismiss**, and the configurable
 **Request Review** action. **More details** opens the user-private JSON diagnostic

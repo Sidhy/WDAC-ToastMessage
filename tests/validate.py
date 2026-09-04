@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 collector = (ROOT / "Show-WDACToast.ps1").read_text(encoding="utf-8")
 configuration = (ROOT / "WDACToast.json").read_text(encoding="utf-8")
+localization = (ROOT / "WDACToast.Localization.xml").read_text(encoding="utf-8")
 
 required_collector_fragments = [
     "[long]$EventRecordId",
@@ -63,18 +64,20 @@ required_collector_fragments = [
     "CallerDescription = $CallerDetails.Description",
     "RequestedSigningLevel = $RequestedSigningLevel",
     "Sha256Hash = $Sha256Hash",
-    "This application is not approved by your organization",
-    "'Blocked app path' = $FilePath",
-    "'Called by app path' = $ProcessPath",
-    "'Blocked by policy name and version' = $PolicyDisplay",
+    "function Get-WdacToastStrings",
+    "GlobalizationPreferences]::Languages",
+    "$Localization.Strings.BlockedAppPath",
+    "$Localization.Strings.CalledByAppPath",
+    "$Localization.Strings.BlockedByPolicy",
     "$PolicyVersion = Get-FirstEventValue",
     "PolicyVersion = $PolicyVersion",
-    '<text hint-maxLines="1">{1}</text>',
-    '<text hint-maxLines="2">{2}</text>',
-    '<group><subgroup>{4}</subgroup></group>',
-    'content="More details"',
-    'content="Dismiss" arguments="dismiss" activationType="system"',
-    '(& $Escape $ActionLabel), (& $Escape $SupportUri)',
+    '<text hint-maxLines="1">{2}</text>',
+    '<text hint-maxLines="2">{3}</text>',
+    '<group><subgroup>{5}</subgroup></group>',
+    'template="ToastGeneric" lang="{0}"',
+    '(& $Escape $Strings.MoreDetails)',
+    '(& $Escape $Strings.Dismiss)',
+    '(& $Escape $LocalizedActionLabel)',
     "Write-Error -ErrorRecord $Failure",
 ]
 for fragment in required_collector_fragments:
@@ -136,5 +139,17 @@ parsed_configuration = json.loads(configuration)
 assert parsed_configuration["ActionLabel"] == "Request Review"
 assert parsed_configuration["LogoPath"] == r"C:\Program Files\Company\WDACToast\MicrosoftDefenderShield.png"
 assert "ProgramData" not in parsed_configuration["LogoPath"]
+
+localization_root = ET.fromstring(localization)
+assert localization_root.attrib["fallbackLanguage"] == "en"
+expected_languages = {"en", "it-IT", "nl-NL", "de-DE", "fr-FR", "uk-UA", "da-DK", "es-ES", "es-AR", "pt-PT", "pt-BR"}
+languages = {node.attrib["tag"]: node for node in localization_root.findall("language")}
+assert set(languages) == expected_languages
+required_strings = {node.attrib["name"] for node in languages["en"].findall("string")}
+assert required_strings == {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "MoreDetails", "Dismiss", "RequestReview"}
+for tag, language in languages.items():
+    strings = language.findall("string")
+    assert {node.attrib["name"] for node in strings} == required_strings, f"{tag} has incomplete localization"
+    assert all((node.text or "").strip() for node in strings), f"{tag} has an empty localized string"
 
 print("Static WDAC collector and task XML checks passed.")
