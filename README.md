@@ -146,13 +146,16 @@ Its value query passes `Event/System/EventRecordID` to the script. The collector
 
 Known field alternatives include the spaced names used by current events (`File Name` and `Process Name`) and unspaced names found on other provider versions.
 
-The notification puts the review fields first: `FilePath` shows the blocked
-file's folder path and filename, `ProcessPath` shows the application that
-initiated the action, and `PolicyName` and `PolicyId` are shown as separate
-fields. These four fields are always included, even if an event does not provide
-a value, so a shared notification has a consistent review format. The remaining
-text explains in general terms that the application is unapproved or could put
-the device and company data at risk.
+The notification starts with a one-line security title, a two-line general
+message, and the blocked filename. Its structured detail section then labels the
+blocked application path, the calling application path, and the blocking policy
+name and version. Missing event values are displayed as **Not provided**, so the
+review format remains consistent across Code Integrity provider versions.
+
+The action row provides **More details**, **Dismiss**, and the configurable
+**Request Review** action. **More details** opens the user-private JSON diagnostic
+for the event, **Dismiss** closes the notification, and **Request Review** opens
+the configured HTTPS `SupportUri`.
 When those files are still
 available, Windows version metadata supplies the description, product,
 publisher, and version for both the blocked file and its caller. The toast also
