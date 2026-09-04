@@ -914,7 +914,6 @@ function Show-ToastNotification {
     param(
         [Parameter(Mandatory)][string]$Title,
         [Parameter(Mandatory)][string]$Message,
-        [Parameter(Mandatory)][string]$FileName,
         [Parameter(Mandatory)][System.Collections.IDictionary]$Details,
         [Parameter(Mandatory)][string]$Language,
         [Parameter(Mandatory)][System.Collections.IDictionary]$Strings
@@ -942,8 +941,8 @@ function Show-ToastNotification {
 
     $Escape = { param([AllowNull()][string]$Value) [System.Security.SecurityElement]::Escape($(if ([string]::IsNullOrWhiteSpace($Value)) { $Strings.NotProvided } else { $Value })) }
     $DetailNodes = foreach ($Entry in $Details.GetEnumerator()) {
-        '<text hint-style="captionSubtle" hint-wrap="true">{0}</text><text hint-style="body" hint-wrap="true">{1}</text>' -f
-            (& $Escape ([string]$Entry.Key).ToUpperInvariant()), (& $Escape ([string]$Entry.Value))
+        '<text hint-style="captionSubtle" hint-wrap="true" hint-maxLines="1">{0}</text><text hint-style="body" hint-wrap="true" hint-maxLines="3">{1}</text>' -f
+            (& $Escape ([string]$Entry.Key)), (& $Escape ([string]$Entry.Value))
     }
 
     $LocalizedActionLabel = if ($ActionLabel -eq 'Request Review') { $Strings.RequestReview } else { $ActionLabel }
@@ -975,8 +974,8 @@ function Show-ToastNotification {
 
     # The BCP-47 lang attribute is part of the Microsoft ToastGeneric schema and
     # lets Windows apply the appropriate font and text shaping to this payload.
-    $ToastXml = '<toast><visual><binding template="ToastGeneric" lang="{0}">{1}<text hint-maxLines="1">{2}</text><text hint-maxLines="2">{3}</text><text hint-style="body" hint-wrap="true" hint-maxLines="2">{4}</text><group><subgroup>{5}</subgroup></group></binding></visual>{6}</toast>' -f
-        (& $Escape $Language), $ImageXml, (& $Escape $Title), (& $Escape $Message), (& $Escape $FileName), ($DetailNodes -join ''), $ActionXml
+    $ToastXml = '<toast><visual><binding template="ToastGeneric" lang="{0}">{1}<text hint-maxLines="1">{2}</text><text hint-maxLines="2">{3}</text><group><subgroup>{4}</subgroup></group></binding></visual>{5}</toast>' -f
+        (& $Escape $Language), $ImageXml, (& $Escape $Title), (& $Escape $Message), ($DetailNodes -join ''), $ActionXml
 
     $Document = [Windows.Data.Xml.Dom.XmlDocument]::new()
     $Document.LoadXml($ToastXml)
@@ -1132,7 +1131,6 @@ function Invoke-WdacToast {
     Show-ToastNotification `
         -Title $Localization.Strings.Title `
         -Message $Localization.Strings.Message `
-        -FileName $FileName `
         -Details $ToastDetails `
         -Language $Localization.Language `
         -Strings $Localization.Strings

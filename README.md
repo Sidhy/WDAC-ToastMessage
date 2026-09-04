@@ -355,8 +355,8 @@ Known field alternatives include the spaced names used by current events (`File 
 If several fields map to the same logical value, the first non-empty recognized
 field is used.
 
-The notification starts with a one-line security title, a two-line general
-message, and the blocked filename. Its structured detail section then labels the
+The notification starts with a one-line security title and a two-line general
+message. Its structured detail section then labels the
 blocked application path, the calling application path, and the blocking policy
 name and version. Missing event values are displayed as **Not provided**, so the
 review format remains consistent across Code Integrity provider versions.
