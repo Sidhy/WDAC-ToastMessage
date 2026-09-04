@@ -120,6 +120,24 @@ uninstall_branch = collector.index("function Uninstall-WdacToast")
 installed_config_read = collector.index("Get-Content -LiteralPath $InstalledConfigurationFile -Raw -ErrorAction Stop", uninstall_branch)
 install_directory_removal = collector.index("Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction Stop", uninstall_branch)
 assert installed_config_read < install_directory_removal, "uninstall must read installed configuration before deleting files"
+
+
+def function_body(name: str) -> str:
+    """Return a top-level PowerShell function through the next declaration."""
+    start = collector.index(f"function {name} {{")
+    next_function = collector.find("\nfunction ", start + 1)
+    return collector[start : next_function if next_function != -1 else len(collector)]
+
+
+for cleanup_function in ("Reset-WdacToastInstallation", "Uninstall-WdacToast"):
+    body = function_body(cleanup_function)
+    final_state_removal = body.rfind("Remove-Item -LiteralPath $StateDirectory")
+    assert final_state_removal != -1, f"{cleanup_function} must remove the state directory"
+    after_state_removal = body[final_state_removal:]
+    assert not re.search(r"\bWrite-WdacToastLog\b", after_state_removal), (
+        f"{cleanup_function} must not file-log after its final state-directory removal"
+    )
+
 readme = (ROOT / "README.md").read_text(encoding="utf-8")
 assert '-Command "Unregister-ScheduledTask' not in readme
 assert "-File .\\Show-WDACToast.ps1 -Uninstall" in readme
