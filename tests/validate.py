@@ -44,6 +44,9 @@ required_collector_fragments = [
     "[ValidateSet('AllSigned', 'Bypass')]",
     "[string]$ExecutionPolicy = 'AllSigned'",
     "ExecutionPolicy in '$ConfigurationFile' must be either AllSigned or Bypass",
+    "[ValidateSet('Hidden', 'Minimized')]",
+    "[string]$WindowStyle = 'Hidden'",
+    "WindowStyle in '$ConfigurationFile' must be either Hidden or Minimized",
     "function Upgrade-WdacToastInstallation",
     "$InstallationMarkerPath = 'HKLM:\\Software\\Company\\WDACToast'",
     "function Get-PreviousWdacToastInstallations",
@@ -128,6 +131,8 @@ assert '"Caller location: $(Limit-Text' not in collector
 assert "function Limit-Text" not in collector
 assert "MaximumLength" not in collector
 assert "<MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>" in collector
+assert "<Hidden>false</Hidden>" in collector
+assert "-NoProfile -NonInteractive -WindowStyle $WindowStyle -ExecutionPolicy $ExecutionPolicy" in collector
 assert "Event/System/EventRecordID" in collector
 assert '`$(EventRecordID)' in collector
 assert "catch {\n    $Failure = $_" in collector
@@ -160,6 +165,7 @@ old_name_removal = upgrade_body.index("Unregister-ScheduledTask -TaskName $Previ
 verification = upgrade_body.index("$IntendedTasks.Count -ne 1")
 assert old_name_guard < old_name_removal < verification, "renamed upgrades must remove and verify the old task"
 assert "[string]$Action.Arguments -notlike \"*${InstalledScript}*\"" in upgrade_body
+assert '[string]$Action.Arguments -notlike "*-WindowStyle $WindowStyle*"' in upgrade_body
 assert "Rollback restored the prior files and task" in upgrade_body
 upgrade_marker_write = upgrade_body.index("Set-WdacToastInstallationMarker")
 upgrade_old_directory_removal = upgrade_body.index("Remove-Item -LiteralPath $RecordedPreviousDirectory")
@@ -168,6 +174,8 @@ assert verification < upgrade_old_directory_removal < upgrade_marker_write, (
 )
 
 install_body = function_body("Install-WdacToast")
+configuration_check_body = function_body("Test-WdacToastConfiguration")
+assert '$TaskArguments -like "*-WindowStyle $WindowStyle*"' in configuration_check_body
 install_register = install_body.index("Register-ScheduledTask -TaskName $TaskName")
 install_old_task_removal = install_body.index("Unregister-ScheduledTask -TaskName $PreviousInstallation.TaskName")
 install_old_directory_removal = install_body.index("Remove-Item -LiteralPath $PreviousInstallation.InstallDirectory")
@@ -190,6 +198,8 @@ assert "-File .\\Show-WDACToast.ps1 -Uninstall" in readme
 assert "HKLM:\\Software\\Company\\WDACToast" in readme
 assert "repository default" in readme and "currently configured" in readme
 assert "Administrator rights for every install, upgrade, reset, and uninstall" in readme
+assert "`-WindowStyle Hidden`" in readme
+assert "`<Hidden>false</Hidden>`" in readme
 
 intune_package_instructions = readme.split("### 1. Prepare the package", 1)[1].split(
     "### 2. Configure the Win32 app", 1
@@ -242,6 +252,7 @@ xml = xml.replace("$EscapedSupportUri", "https://support.example.test/details")
 xml = xml.replace("$EscapedInstallDirectory", r"C:\Program Files\Company\WDACToast")
 xml = xml.replace("$EscapedTaskName", "Company WDAC Block Notification")
 xml = xml.replace("$ExecutionPolicy", "Bypass")
+xml = xml.replace("$WindowStyle", "Minimized")
 xml = xml.replace("`$(EventRecordID)", "123")
 ET.fromstring(xml)
 task = ET.fromstring(xml)
@@ -250,14 +261,19 @@ assert task.findtext(".//t:GroupId", namespaces=ns) == "S-1-5-4"
 assert task.findtext(".//t:RunLevel", namespaces=ns) == "LeastPrivilege"
 assert task.find(".//t:UserId", namespaces=ns) is None
 assert task.find(".//t:LogonType", namespaces=ns) is None
+assert task.findtext(".//t:Hidden", namespaces=ns) == "false"
 assert "-Broker" not in task.findtext(".//t:Arguments", namespaces=ns)
 assert "InteractiveToken" not in xml
+assert "-NoProfile -NonInteractive -WindowStyle Minimized -ExecutionPolicy Bypass" in task.findtext(
+    ".//t:Arguments", namespaces=ns
+)
 assert "-ExecutionPolicy Bypass" in task.findtext(".//t:Arguments", namespaces=ns)
-assert task.findtext(".//t:Arguments", namespaces=ns).endswith("-ExecutionPolicy Bypass")
+assert task.findtext(".//t:Arguments", namespaces=ns).endswith("-WindowStyle Minimized")
 
 parsed_configuration = json.loads(configuration)
 assert parsed_configuration["ActionLabel"] == "Request Review"
 assert parsed_configuration["ExecutionPolicy"] == "AllSigned"
+assert parsed_configuration["WindowStyle"] == "Hidden"
 assert parsed_configuration["LogoPath"] == r"C:\Program Files\Company\WDACToast\MicrosoftDefenderShield.png"
 assert "ProgramData" not in parsed_configuration["LogoPath"]
 

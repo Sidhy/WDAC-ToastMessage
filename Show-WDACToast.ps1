@@ -35,6 +35,12 @@ param(
     [ValidateSet('AllSigned', 'Bypass')]
     [string]$ExecutionPolicy = 'AllSigned',
 
+    # Controls the window state used by the installed Scheduled Task.
+    # Hidden prevents a console flash; Minimized is available when the window
+    # should remain accessible.
+    [ValidateSet('Hidden', 'Minimized')]
+    [string]$WindowStyle = 'Hidden',
+
     # Replaces an existing installation while preserving enough of its identity
     # to remove a renamed task and to roll back a failed task registration.
     [switch]$Upgrade,
@@ -69,6 +75,7 @@ $DefaultConfiguration = [ordered]@{
     LogoPath = $null
     TaskName = 'Company WDAC Block Notification'
     ExecutionPolicy = 'AllSigned'
+    WindowStyle = 'Hidden'
     DuplicateCooldownMinutes = 5
 }
 $ScriptDirectory = Split-Path -Parent $PSCommandPath
@@ -119,6 +126,10 @@ if ([string]$ExecutionPolicy -notin @('AllSigned', 'Bypass')) {
     throw "ExecutionPolicy in '$ConfigurationFile' must be either AllSigned or Bypass."
 }
 $ExecutionPolicy = [string]$ExecutionPolicy
+if ([string]$WindowStyle -notin @('Hidden', 'Minimized')) {
+    throw "WindowStyle in '$ConfigurationFile' must be either Hidden or Minimized."
+}
+$WindowStyle = [string]$WindowStyle
 
 $LogName = 'Microsoft-Windows-CodeIntegrity/Operational'
 $StateDirectory = Join-Path $env:LOCALAPPDATA 'Company\WDACToast'
@@ -355,8 +366,8 @@ function Test-WdacToastConfiguration {
         $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task state' -Passed ($Task.State -ne 'Disabled') -SuccessMessage "Task state is $($Task.State)." -FailureMessage 'The task is disabled.'))
         $PrincipalIsInteractive = $Task.Principal.GroupId -eq 'S-1-5-4' -and $Task.Principal.RunLevel -eq 'Limited'
         $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task principal' -Passed $PrincipalIsInteractive -SuccessMessage 'Task is assigned to the well-known INTERACTIVE group at least privilege.' -FailureMessage "Expected GroupId S-1-5-4 and Limited run level; found GroupId '$($Task.Principal.GroupId)', UserId '$($Task.Principal.UserId)', LogonType '$($Task.Principal.LogonType)', RunLevel '$($Task.Principal.RunLevel)'."))
-        $ActionIsValid = $null -ne $TaskAction -and $TaskExecute -like '*\WindowsPowerShell\v1.0\powershell.exe' -and $TaskArguments -like "*${InstalledScript}*" -and $TaskArguments -like "*-ExecutionPolicy $ExecutionPolicy*" -and $TaskArguments -notlike '*-Broker*'
-        $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task action' -Passed $ActionIsValid -SuccessMessage "Task launches the renderer directly with Windows PowerShell 5.1 and $ExecutionPolicy." -FailureMessage "The task action is unexpected. Expected ExecutionPolicy '$ExecutionPolicy'; Execute='$TaskExecute'; Arguments='$TaskArguments'."))
+        $ActionIsValid = $null -ne $TaskAction -and $TaskExecute -like '*\WindowsPowerShell\v1.0\powershell.exe' -and $TaskArguments -like "*${InstalledScript}*" -and $TaskArguments -like "*-WindowStyle $WindowStyle*" -and $TaskArguments -like "*-ExecutionPolicy $ExecutionPolicy*" -and $TaskArguments -notlike '*-Broker*'
+        $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task action' -Passed $ActionIsValid -SuccessMessage "Task launches the renderer directly with Windows PowerShell 5.1 using window style $WindowStyle and execution policy $ExecutionPolicy." -FailureMessage "The task action is unexpected. Expected WindowStyle '$WindowStyle' and ExecutionPolicy '$ExecutionPolicy'; Execute='$TaskExecute'; Arguments='$TaskArguments'."))
     }
 
     $EventLog = Get-WinEvent -ListLog $LogName -ErrorAction SilentlyContinue
@@ -481,7 +492,7 @@ function Install-WdacToast {
   <Triggers><EventTrigger><Enabled>true</Enabled><Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="Microsoft-Windows-CodeIntegrity/Operational"&gt;&lt;Select Path="Microsoft-Windows-CodeIntegrity/Operational"&gt;*[System[EventID=3077]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription><ValueQueries><Value name="EventRecordID">Event/System/EventRecordID</Value></ValueQueries></EventTrigger></Triggers>
   <Principals><Principal id="Author"><GroupId>S-1-5-4</GroupId><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings><MultipleInstancesPolicy>Queue</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>false</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT5M</ExecutionTimeLimit><Priority>7</Priority></Settings>
-  <Actions Context="Author"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoProfile -NonInteractive -ExecutionPolicy $ExecutionPolicy -File &quot;$EscapedScript&quot; -EventRecordId &quot;`$(EventRecordID)&quot; -ExecutionPolicy $ExecutionPolicy</Arguments></Exec></Actions>
+  <Actions Context="Author"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoProfile -NonInteractive -WindowStyle $WindowStyle -ExecutionPolicy $ExecutionPolicy -File &quot;$EscapedScript&quot; -EventRecordId &quot;`$(EventRecordID)&quot; -ExecutionPolicy $ExecutionPolicy -WindowStyle $WindowStyle</Arguments></Exec></Actions>
 </Task>
 "@
 
@@ -589,8 +600,8 @@ function Upgrade-WdacToastInstallation {
             throw "Upgrade verification expected exactly one '$TaskName' task and no '$PreviousTaskName' task; found $($IntendedTasks.Count) and $($OldTasks.Count)."
         }
         $Action = @($IntendedTasks[0].Actions) | Select-Object -First 1
-        if ($null -eq $Action -or [string]$Action.Arguments -notlike "*${InstalledScript}*") {
-            throw "Upgrade verification found that Scheduled Task '$TaskName' does not point to '$InstalledScript'."
+        if ($null -eq $Action -or [string]$Action.Arguments -notlike "*${InstalledScript}*" -or [string]$Action.Arguments -notlike "*-WindowStyle $WindowStyle*") {
+            throw "Upgrade verification found that Scheduled Task '$TaskName' does not point to '$InstalledScript' with window style '$WindowStyle'."
         }
 
         if (-not [string]::Equals($RecordedPreviousDirectory, $InstallDirectory, [StringComparison]::OrdinalIgnoreCase)) {
@@ -974,7 +985,7 @@ function Show-ToastNotification {
 }
 
 function Invoke-WdacToast {
-    Write-WdacToastLog -Message "Invocation started with EventRecordId=$EventRecordId, Upgrade=$Upgrade, ResetInstallation=$ResetInstallation, Uninstall=$Uninstall, CleanupLogs=$CleanupLogs, AppId='$AppId', TaskName='$TaskName', InstallDirectory='$InstallDirectory', ExecutionPolicy='$ExecutionPolicy'."
+    Write-WdacToastLog -Message "Invocation started with EventRecordId=$EventRecordId, Upgrade=$Upgrade, ResetInstallation=$ResetInstallation, Uninstall=$Uninstall, CleanupLogs=$CleanupLogs, AppId='$AppId', TaskName='$TaskName', InstallDirectory='$InstallDirectory', ExecutionPolicy='$ExecutionPolicy', WindowStyle='$WindowStyle'."
     if ($Upgrade -and $EventRecordId -ne 0) {
         throw 'Upgrade requires EventRecordId = 0 and cannot be combined with event processing.'
     }
