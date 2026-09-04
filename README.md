@@ -1,27 +1,27 @@
 # WDAC Event 3077 Toast Notification
 
-`Show-WDACToast.ps1` installs and runs a per-user Windows notification for Windows Defender Application Control enforcement events.
+`Show-WDACToast.ps1` installs one Windows Defender Application Control event task whose principal is the built-in **INTERACTIVE** group. Task Scheduler therefore runs the toast directly in a signed-in interactive user's context, at least privilege, without LocalSystem or token impersonation.
 
 ## How it works
 
 The script has two entry paths:
 
-1. When run without an event record ID, it installs itself under `C:\Program Files\Company\WDACToast`, identifies the user who owns Explorer in the current Windows session, registers that user's custom toast application identity, and creates an event-triggered Scheduled Task for that user.
-2. When the Scheduled Task supplies an `EventRecordId`, the installed script retrieves that exact Event ID 3077 record, writes complete diagnostics, applies duplicate suppression, and displays the toast.
+1. When run without an event record ID, it installs itself under `C:\Program Files\Company\WDACToast` and creates one event-triggered Scheduled Task assigned to the well-known INTERACTIVE SID (`S-1-5-4`).
+2. When an event fires while an interactive user is signed in, Task Scheduler supplies that interactive token and launches the renderer directly. The renderer creates the current user's toast application identity, retrieves the exact Event ID 3077 record, writes user-private diagnostics, applies duplicate suppression, and displays the toast.
 
-The installation check runs on every invocation. If an invocation detects a missing installation file, application identity registration, or Scheduled Task registration, it recreates the missing components before processing an event.
+The application identity is created on demand in the renderer's `HKCU`, so a user who signs in after deployment needs no separate installation. A missing installation must be repaired by rerunning the deployment script elevated; a standard-user renderer never attempts an administrative repair.
 
 ## Requirements
 
 - Windows 10 or Windows 11.
 - Windows PowerShell 5.1.
-- An interactive user session with the Windows Push Notifications user service available. Do not invoke the renderer with PowerShell 7 (`pwsh.exe`) or as SYSTEM: PowerShell 7 does not provide the Windows PowerShell 5.1 WinRT type projection used by `Windows.UI.Notifications`.
+- A signed-in interactive user session with the Windows Push Notifications user service available. Do not invoke the renderer with PowerShell 7 (`pwsh.exe`) or as SYSTEM: PowerShell 7 does not provide the Windows PowerShell 5.1 WinRT type projection used by `Windows.UI.Notifications`.
 - Notifications enabled for the user in Windows Settings (and not disabled by organizational policy). The script reports an explicit error when `HKCU\Software\Microsoft\Windows\CurrentVersion\PushNotifications\ToastEnabled` is present and set to `0`; it does not override that preference or policy.
 - Permission to read `Microsoft-Windows-CodeIntegrity/Operational` in the target user context.
 - Administrator rights for the initial installation under Program Files.
 - A code-signed production script permitted by the deployed WDAC policy. The Scheduled Task uses `-ExecutionPolicy AllSigned`.
 
-The task runs with `InteractiveToken` and `LeastPrivilege`, so it is registered separately for each user who should see notifications. If installation is elevated with a different administrator account, the installer deliberately uses the owner of `explorer.exe` in the same session—not the administrator identity. Installation stops rather than accidentally creating an administrator or SYSTEM task when no logged-on Explorer user can be found. A SYSTEM task cannot display a toast directly in an interactive user's session.
+The task is not tied to the installer or a named user. Its group principal is the well-known INTERACTIVE SID, it uses `LeastPrivilege`, and its action directly invokes the signed renderer. No service account, stored password, user-token duplication, native session launcher, or execution-policy bypass is used.
 
 ## Configure
 
@@ -62,21 +62,17 @@ Available settings are:
   disable the image.
 - `InstallDirectory` and `TaskName` — optional deployment-specific names.
 
-`C:\ProgramData\Company\WDACToast` is reserved for mutable notification state,
-operational logs, and per-event JSON diagnostics; it no longer stores branding
-assets. During installation, the script grants the well-known **Authenticated
-Users** SID `Modify` permission on this directory, its log directory, and their
-descendants. Consequently, a directory first created by an elevated installer
-does not prevent standard-user task instances from updating state or writing
-logs. The same values can be supplied as command-line parameters during
+Mutable notification state, operational logs, and per-event JSON diagnostics are
+stored in `%LOCALAPPDATA%\Company\WDACToast` for the user who receives the toast.
+The script does not grant Authenticated Users access to a shared machine
+directory. Branding and signed program files remain under Program Files. The
+same configuration values can be supplied as command-line parameters during
 installation.
 
 ## Install
 
-Run the single script from an elevated PowerShell session in the same Windows
-session as the signed-in user who should receive notifications. The elevation
-may use a separate administrator credential; task ownership is taken from that
-session's Explorer shell:
+Run the single script once from an elevated Windows PowerShell session. The user
+who performs installation does not become the task owner or notification target:
 
 ```powershell
 .\Show-WDACToast.ps1 `
@@ -86,11 +82,10 @@ session's Explorer shell:
     -SupportUri 'https://support.contoso.example/wdac-review'
 ```
 
-Run the installation once in each concurrently signed-in user's session when
-Fast User Switching or multiple RDP sessions are in use. A Scheduled Task has a
-fixed user principal; it cannot dynamically switch principals between sessions.
-Using a distinct `TaskName` per user prevents one registration from replacing
-another if multiple users need notifications on the same device.
+Do not install once per user or create user-specific task names. The INTERACTIVE
+group principal lets Task Scheduler select a signed-in interactive token instead
+of permanently binding the task to the installer. Mutable state remains inside
+the selected user's profile.
 
 The command is idempotent. Every installation run copies the invoking source over
 the Program Files copy and re-registers the components, even when they already
@@ -99,8 +94,8 @@ not `C:\Program Files\Company\WDACToast\Show-WDACToast.ps1`, and do not pass
 `EventRecordId` during installation.
 
 For a normal update, run the new signed deployment copy with the same parameters;
-that replaces the installed script, configuration, application registration, and
-task. To completely reset a damaged or stale installation, run the **new deployment
+that replaces the installed script, configuration, and computer task. To
+completely reset a damaged or stale installation, run the **new deployment
 copy** (not the copy under Program Files) from an elevated Windows PowerShell 5.1
 session:
 
@@ -113,13 +108,13 @@ session:
     -Verbose
 ```
 
-Reset removes the configured Scheduled Task and per-user AppUserModelID, the
-installation directory, logs, and duplicate-notification state, and then installs
-the current package. It also reads the previous installed JSON first so renamed
-`AppId` and `TaskName` registrations are removed. The reset targets the owner of
-`explorer.exe` in the current session, so it remains correct when elevation uses a
-segregated administrator account. Run it separately in each affected user's
-interactive session. Do not combine `-ResetInstallation` with `-EventRecordId`.
+Reset removes the configured Scheduled Task, installation directory, and state
+for the account running reset, and then installs the current package. It reads
+the previous installed JSON first so a renamed `TaskName` is also removed. The
+script deliberately does not mount, enumerate, or modify other users' registry
+hives; an existing per-user notification identity is inert and is safely
+refreshed if that user later receives another toast. Do not combine
+`-ResetInstallation` with `-EventRecordId`.
 
 After upgrading, verify that the installed file exposes the parameter before
 testing an event:
@@ -188,15 +183,17 @@ friendly path and the original value in `RawFilePath`/`RawProcessPath`.
 Each event is written before the notification decision to:
 
 ```text
-C:\ProgramData\Company\WDACToast\Logs\WDAC-<timestamp>-<record-id>.json
+%LOCALAPPDATA%\Company\WDACToast\Logs\WDAC-<timestamp>-<record-id>.json
 ```
 
-The JSON includes selected fields, all named `EventData` values, and the complete event XML. Treat this directory as security-relevant data and apply an ACL appropriate to the deployment.
+The JSON includes selected fields, all named `EventData` values, and the complete
+event XML. The directory inherits the user's profile ACL and is not shared with
+other signed-in users.
 
 Operational activity and caught errors are appended to:
 
 ```text
-C:\ProgramData\Company\WDACToast\Logs\WDACToast.log
+%LOCALAPPDATA%\Company\WDACToast\Logs\WDACToast.log
 ```
 
 Every invocation now logs its parameters and execution stages. Configuration checks report the installed script, per-user AppUserModelID values, Scheduled Task state/user/action, Code Integrity log, support URI, Windows PowerShell host, interactive session, notification preference and policy, and push-notification service. Passing `-Verbose` mirrors all `INFO` entries to the console; failed checks and duplicate suppression are both written to the file and shown as PowerShell warnings.
@@ -292,8 +289,8 @@ Get-Service -Name 'WpnUserService*'
 Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications' -Name ToastEnabled -ErrorAction SilentlyContinue
 ```
 
-The installed task deliberately launches 64-bit Windows PowerShell 5.1 and uses `InteractiveToken`. A manual test launched in PowerShell 7 can therefore fail even though the task configuration is correct. Re-run it with `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` in the affected user's signed-in session. Windows Server Core and other systems without the Windows notification platform are not supported.
+The installed task deliberately launches 64-bit Windows PowerShell 5.1 under the INTERACTIVE group principal. A manual test launched in PowerShell 7 can therefore fail even though the task configuration is correct. Re-run it with `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` in the affected user's signed-in session. Windows Server Core and other systems without the Windows notification platform are not supported.
 
-For comparison, the referenced [Toast Notification Script](https://github.com/imabdk/Toast-Notification-Script/blob/master/Remediate-ToastNotification.ps1) checks the workstation OS, the current user's push-notification setting, user context, application registration, and the notification service before loading the same WinRT types. This project keeps only the prerequisites relevant to its narrower WDAC renderer: the installer owns its per-user AppUserModelID, the task owns the interactive Windows PowerShell host, and the renderer validates its host, session, user preference, and WinRT availability. It intentionally does **not** enable notifications, restart services, or change enterprise-managed settings on the user's behalf.
+For comparison, the referenced [Toast Notification Script](https://github.com/imabdk/Toast-Notification-Script/blob/master/Remediate-ToastNotification.ps1) checks the workstation OS, the current user's push-notification setting, user context, application registration, and the notification service before loading the same WinRT types. This project keeps only the prerequisites relevant to its narrower WDAC renderer: the renderer owns its per-user AppUserModelID, the task selects an interactive Windows PowerShell host, and the renderer validates its host, session, user preference, and WinRT availability. It intentionally does **not** enable notifications, restart services, or change enterprise-managed settings on the user's behalf.
 
 If users cannot read the event log, use a separate protected SYSTEM collector and a per-user renderer. Secure that handoff so standard users cannot inject notification text or actions.
