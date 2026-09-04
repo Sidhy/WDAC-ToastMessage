@@ -41,11 +41,11 @@ The task is not tied to the installer or a named user. Its group principal is th
 Configuration is read from `WDACToast.json` beside `Show-WDACToast.ps1`. During
 installation, the JSON file is copied beside the installed script under
 `C:\Program Files\Company\WDACToast`. The Scheduled Task supplies the event
-record ID and its installed execution-policy choice, so subsequent edits to the
-other values in the installed JSON take effect on its next invocation. Changing
-`ExecutionPolicy` requires reinstalling or upgrading the task. If the file is
-absent, the built-in defaults are used. Explicit command-line parameters
-override JSON values.
+record ID and its installed execution-policy and window-style choices, so
+subsequent edits to the other values in the installed JSON take effect on its
+next invocation. Changing `ExecutionPolicy` or `WindowStyle` requires
+reinstalling or upgrading the task. If the file is absent, the built-in defaults
+are used. Explicit command-line parameters override JSON values.
 
 Static notification text is read from `WDACToast.Localization.xml`, which is
 also copied beside the installed script. At render time the script reads the
@@ -82,6 +82,7 @@ Edit the supplied JSON before deployment:
   "LogoPath": "C:\\Program Files\\Company\\WDACToast\\MicrosoftDefenderShield.png",
   "TaskName": "Company WDAC Block Notification",
   "ExecutionPolicy": "AllSigned",
+  "WindowStyle": "Hidden",
   "DuplicateCooldownMinutes": 5
 }
 ```
@@ -103,6 +104,9 @@ Available settings are:
 - `ExecutionPolicy` — execution policy for the Scheduled Task action. Valid
   values are `AllSigned` (the default) and `Bypass`. Select `Bypass` only when
   script trust is enforced by WDAC or another organizational control.
+- `WindowStyle` — window state for the Scheduled Task action. Valid values are
+  `Hidden` (the default, preventing a console flash) and `Minimized` (an
+  opt-in choice that leaves the PowerShell window accessible on the taskbar).
 - `DuplicateCooldownMinutes` — suppression window from `0` (disabled) through
   `1440`; the default is five minutes.
 
@@ -115,6 +119,7 @@ Command-line parameters take precedence over matching JSON properties:
 | `SupportUri`, `ActionLabel`, `AppId`, `DisplayName`, `LogoPath` | Override notification behavior or branding. |
 | `InstallDirectory`, `TaskName` | Override machine installation names; use the same values consistently on later installation/reset commands. |
 | `ExecutionPolicy` | Sets the installed Scheduled Task action to `AllSigned` (default) or `Bypass`. |
+| `WindowStyle` | Sets the installed Scheduled Task action to `Hidden` (default) or `Minimized`. |
 | `Upgrade` | Transactionally replaces an existing installation; valid only with `EventRecordId = 0` and mutually exclusive with reset and uninstall. |
 | `UpgradeFromInstallDirectory` | Legacy fallback for `Upgrade`: identifies an old directory only when no machine installation marker exists. |
 | `ResetInstallation` | Removes and rebuilds the installation; valid only with `EventRecordId = 0` and only from a deployment copy outside the installed directory. |
@@ -160,6 +165,13 @@ change the execution policy used to start the installer itself; choose that in
 the parent `powershell.exe` command when required. Rerun installation (or use
 `-Upgrade` for an intentional update) after changing this setting so the task
 is re-registered.
+
+By default, the installed task starts Windows PowerShell with
+`-WindowStyle Hidden`, so an event-triggered notification does not briefly
+display a console window. Set `WindowStyle` to `Minimized` only when an
+accessible minimized window is preferred. The task XML deliberately retains
+`<Hidden>false</Hidden>`: that separate setting keeps the task visible in the
+normal Task Scheduler view and does not control the PowerShell console window.
 
 Do not install once per user or create user-specific task names. The INTERACTIVE
 group principal lets Task Scheduler select a signed-in interactive token instead
@@ -209,9 +221,13 @@ parameters and the explicit upgrade switch:
     -Verbose
 ```
 
-Upgrade reads the machine marker and installed `WDACToast.json` before replacing files. A same-name
-task is replaced with `Register-ScheduledTask -Force`; when `TaskName` changes,
-the replacement is registered first and the recorded old task is then removed.
+Upgrade reads the machine marker and installed `WDACToast.json` before replacing
+files. After releasing and signing an updated script, deploy that signed copy
+with this `-Upgrade` workflow. A same-name task is replaced with
+`Register-ScheduledTask -Force`, which applies updated action arguments such as
+`-WindowStyle Hidden` (or the explicitly selected `Minimized` value); when
+`TaskName` changes, the replacement is registered first and the recorded old
+task is then removed.
 The operation verifies that exactly one new-name task remains and that its action
 uses the newly installed script. If copying succeeds but registration or
 verification fails, it restores the destination file snapshot and the prior
