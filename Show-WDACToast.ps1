@@ -500,7 +500,10 @@ function Get-StableHash {
 function Show-ToastNotification {
     param(
         [Parameter(Mandatory)][string]$Title,
-        [Parameter(Mandatory)][string[]]$Lines
+        [Parameter(Mandatory)][string]$Message,
+        [Parameter(Mandatory)][string]$FileName,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Details,
+        [Parameter(Mandatory)][string]$DetailsUri
     )
 
     if ($PSVersionTable.PSEdition -ne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5) {
@@ -523,19 +526,14 @@ function Show-ToastNotification {
         throw 'Toast notifications are disabled for the current user (HKCU PushNotifications\ToastEnabled is 0). Enable notifications in Windows Settings or through organizational policy.'
     }
 
-    $EscapedTitle = [System.Security.SecurityElement]::Escape($Title)
-    $TextNodes = foreach ($Line in $Lines) {
-        # Pass complete values to wrapped adaptive text nodes. Applying a
-        # character limit here permanently removes review details.
-        '<text hint-wrap="true">{0}</text>' -f [System.Security.SecurityElement]::Escape($Line)
+    $Escape = { param([AllowNull()][string]$Value) [System.Security.SecurityElement]::Escape($(if ([string]::IsNullOrWhiteSpace($Value)) { 'Not provided' } else { $Value })) }
+    $DetailNodes = foreach ($Entry in $Details.GetEnumerator()) {
+        '<text hint-style="captionSubtle" hint-wrap="true">{0}</text><text hint-style="body" hint-wrap="true">{1}</text>' -f
+            (& $Escape ([string]$Entry.Key).ToUpperInvariant()), (& $Escape ([string]$Entry.Value))
     }
-    $ActionXml = if ([string]::IsNullOrWhiteSpace($SupportUri)) {
-        ''
-    }
-    else {
-        '<actions><action content="{0}" arguments="{1}" activationType="protocol"/></actions>' -f
-            [System.Security.SecurityElement]::Escape($ActionLabel), [System.Security.SecurityElement]::Escape($SupportUri)
-    }
+
+    $ActionXml = '<actions><action content="More details" arguments="{0}" activationType="protocol"/><action content="Dismiss" arguments="dismiss" activationType="system"/><action content="{1}" arguments="{2}" activationType="protocol"/></actions>' -f
+        (& $Escape $DetailsUri), (& $Escape $ActionLabel), (& $Escape $SupportUri)
 
     $ImageXml = ''
     if (-not [string]::IsNullOrWhiteSpace($LogoPath)) {
@@ -556,12 +554,12 @@ function Show-ToastNotification {
             throw 'LogoPath must be a local file path, file URI, or HTTPS URI.'
         }
         if ($null -ne $LogoUri) {
-            $ImageXml = '<image placement="appLogoOverride" src="{0}"/>' -f [System.Security.SecurityElement]::Escape($LogoUri)
+            $ImageXml = '<image placement="appLogoOverride" src="{0}"/>' -f (& $Escape $LogoUri)
         }
     }
 
-    $ToastXml = '<toast><visual><binding template="ToastGeneric">{0}<text>{1}</text>{2}</binding></visual>{3}</toast>' -f
-        $ImageXml, $EscapedTitle, ($TextNodes -join ''), $ActionXml
+    $ToastXml = '<toast><visual><binding template="ToastGeneric">{0}<text hint-maxLines="1">{1}</text><text hint-maxLines="2">{2}</text><text hint-style="body" hint-wrap="true" hint-maxLines="2">{3}</text><group><subgroup>{4}</subgroup></group></binding></visual>{5}</toast>' -f
+        $ImageXml, (& $Escape $Title), (& $Escape $Message), (& $Escape $FileName), ($DetailNodes -join ''), $ActionXml
 
     $Document = [Windows.Data.Xml.Dom.XmlDocument]::new()
     $Document.LoadXml($ToastXml)
@@ -609,6 +607,7 @@ function Invoke-WdacToast {
     $ProcessPath = ConvertFrom-NtDevicePath -Path $RawProcessPath
     $PolicyName = Get-FirstEventValue -EventData $EventData -Names @('PolicyName', 'Policy Name', 'PolicyFriendlyName')
     $PolicyId = Get-FirstEventValue -EventData $EventData -Names @('PolicyID', 'PolicyId', 'PolicyGUID')
+    $PolicyVersion = Get-FirstEventValue -EventData $EventData -Names @('PolicyVersion', 'Policy Version')
     $Status = Get-FirstEventValue -EventData $EventData -Names @('Status', 'ErrorCode')
     $RequestedSigningLevel = Get-FirstEventValue -EventData $EventData -Names @('Requested Signing Level', 'RequestedSigningLevel')
     $ValidatedSigningLevel = Get-FirstEventValue -EventData $EventData -Names @('Validated Signing Level', 'ValidatedSigningLevel')
@@ -645,6 +644,7 @@ function Invoke-WdacToast {
         CallerPublisher = $CallerDetails.Publisher
         PolicyName = $PolicyName
         PolicyId = $PolicyId
+        PolicyVersion = $PolicyVersion
         Status = $Status
         RequestedSigningLevel = $RequestedSigningLevel
         ValidatedSigningLevel = $ValidatedSigningLevel
@@ -673,27 +673,29 @@ function Invoke-WdacToast {
         }
     }
 
-    $ToastLines = @(
-        "FilePath: $FilePath"
-        "ProcessPath: $ProcessPath"
-        "PolicyName: $PolicyName"
-        "PolicyId: $PolicyId"
-        'Security reason: This application is not approved by your organization or could put this device and company data at risk.'
-    )
-    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Description)) { $ToastLines += "Calling application: $($CallerDetails.Description)" }
-    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Product)) { $ToastLines += "Caller product: $($CallerDetails.Product)" }
-    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Publisher)) { $ToastLines += "Caller publisher: $($CallerDetails.Publisher)" }
-    if (-not [string]::IsNullOrWhiteSpace($CallerDetails.Version)) { $ToastLines += "Caller version: $($CallerDetails.Version)" }
-    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Description)) { $ToastLines += "Description: $($FileDetails.Description)" }
-    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Product)) { $ToastLines += "Product: $($FileDetails.Product)" }
-    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Publisher)) { $ToastLines += "Publisher: $($FileDetails.Publisher)" }
-    if (-not [string]::IsNullOrWhiteSpace($FileDetails.Version)) { $ToastLines += "Version: $($FileDetails.Version)" }
-    if (-not [string]::IsNullOrWhiteSpace($Status)) { $ToastLines += "Status: $Status" }
-    if (-not [string]::IsNullOrWhiteSpace($ValidatedSigningLevel)) { $ToastLines += "Validated signing level: $ValidatedSigningLevel" }
-    $ToastLines += "Reference: WDAC-$($Event.RecordId)"
+    $PolicyDisplay = if ([string]::IsNullOrWhiteSpace($PolicyVersion)) {
+        $PolicyName
+    }
+    elseif ([string]::IsNullOrWhiteSpace($PolicyName)) {
+        $PolicyVersion
+    }
+    else {
+        "$PolicyName (version $PolicyVersion)"
+    }
+    $ToastDetails = [ordered]@{
+        'Blocked app path' = $FilePath
+        'Called by app path' = $ProcessPath
+        'Blocked by policy name and version' = $PolicyDisplay
+    }
+    $DetailsUri = ([Uri](Resolve-Path -LiteralPath $LogFile).Path).AbsoluteUri
 
-    Write-WdacToastLog -Message "Submitting toast to the Windows notification platform with AppId '$AppId' and $($ToastLines.Count) body line(s)."
-    Show-ToastNotification -Title 'Application blocked by security policy' -Lines $ToastLines
+    Write-WdacToastLog -Message "Submitting toast to the Windows notification platform with AppId '$AppId'."
+    Show-ToastNotification `
+        -Title 'Application blocked by security policy' `
+        -Message 'This application is not approved by your organization or could put this device and company data at risk.' `
+        -FileName $FileName `
+        -Details $ToastDetails `
+        -DetailsUri $DetailsUri
     Write-WdacToastLog -Message 'The Windows notification platform accepted the toast. Windows can still suppress its presentation because of Do Not Disturb/Focus Assist or per-app notification settings.'
 
     $State[$KeyHash] = $Event.TimeCreated
