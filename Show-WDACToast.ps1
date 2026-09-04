@@ -29,7 +29,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$TaskName = 'Company WDAC Block Notification',
 
-    # Removes the existing per-user registration, installed files, and mutable
+    # Removes the existing machine registration, installed files, and mutable
     # state before installing the deployment copy again. This is intentionally
     # valid only for an installation invocation (EventRecordId 0).
     [switch]$ResetInstallation
@@ -87,53 +87,24 @@ if ([long]$DuplicateCooldownMinutes -lt 0 -or [long]$DuplicateCooldownMinutes -g
 $DuplicateCooldownMinutes = [int]$DuplicateCooldownMinutes
 
 $LogName = 'Microsoft-Windows-CodeIntegrity/Operational'
-$StateDirectory = Join-Path $env:ProgramData 'Company\WDACToast'
+$StateDirectory = Join-Path $env:LOCALAPPDATA 'Company\WDACToast'
 $LogDirectory = Join-Path $StateDirectory 'Logs'
-$StateFile = Join-Path $StateDirectory 'NotificationState.json'
+$CurrentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$StateFile = Join-Path $StateDirectory "NotificationState-$CurrentSid.json"
 $InstalledScript = Join-Path $InstallDirectory 'Show-WDACToast.ps1'
 $DefaultLogoPath = Join-Path $InstallDirectory 'MicrosoftDefenderShield.png'
 
-function Get-InteractiveUserIdentity {
-    # An installer started with alternate administrator credentials has a
-    # different Windows identity from the user who owns the desktop. Locate the
-    # Explorer process in this session so the task and HKCU-equivalent
-    # registration are assigned to the user who can actually receive the toast.
-    $CurrentProcess = Get-Process -Id $PID
-    $Explorer = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'explorer.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.SessionId -eq $CurrentProcess.SessionId } |
-        Select-Object -First 1)
-    if ($Explorer.Count -gt 0) {
-        $Owner = Invoke-CimMethod -InputObject $Explorer[0] -MethodName GetOwner -ErrorAction SilentlyContinue
-        if ($null -ne $Owner -and $Owner.ReturnValue -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$Owner.User)) {
-            $AccountName = if ([string]::IsNullOrWhiteSpace([string]$Owner.Domain)) { [string]$Owner.User } else { "$($Owner.Domain)\$($Owner.User)" }
-            $Sid = ([System.Security.Principal.NTAccount]$AccountName).Translate([System.Security.Principal.SecurityIdentifier])
-            return [pscustomobject]@{ Name = $AccountName; Sid = $Sid.Value }
-        }
-    }
-
-    throw 'No logged-on Explorer user was found in this Windows session. Installation requires an interactive user so the task is never registered to an administrator or service account by mistake.'
+function Ensure-CurrentUserAppIdentity {
+    $Path = "HKCU:\Software\Classes\AppUserModelId\$AppId"
+    New-Item -Path $Path -Force | Out-Null
+    New-ItemProperty -Path $Path -Name DisplayName -Value $DisplayName -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $Path -Name ShowInSettings -Value 1 -PropertyType DWord -Force | Out-Null
+    Write-WdacToastLog -Message "Ensured AppUserModelID '$AppId' for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
 }
 
 function Initialize-WdacToastStateDirectory {
     New-Item -Path $StateDirectory -ItemType Directory -Force | Out-Null
     New-Item -Path $LogDirectory -ItemType Directory -Force | Out-Null
-
-    # Use a well-known SID rather than a localized account name. Modify applies
-    # to this directory and descendants, allowing every interactive account to
-    # maintain shared duplicate state and diagnostics after an elevated install.
-    $AuthenticatedUsers = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-11')
-    foreach ($Directory in @($StateDirectory, $LogDirectory)) {
-        $Acl = Get-Acl -LiteralPath $Directory
-        $Rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-            $AuthenticatedUsers,
-            [System.Security.AccessControl.FileSystemRights]::Modify,
-            [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
-            [System.Security.AccessControl.PropagationFlags]::None,
-            [System.Security.AccessControl.AccessControlType]::Allow
-        )
-        $Acl.SetAccessRule($Rule)
-        Set-Acl -LiteralPath $Directory -AclObject $Acl
-    }
 }
 
 function Write-WdacToastLog {
@@ -154,7 +125,7 @@ function Write-WdacToastLog {
     }
     catch {
         # Logging must never hide the original failure. The task history still
-        # receives this fallback when ProgramData cannot be written.
+        # receives this fallback when the user's local log cannot be written.
         Write-Warning "$Entry (file logging failed: $($_.Exception.Message))"
     }
 }
@@ -203,30 +174,31 @@ function Test-WdacToastConfiguration {
 
     Write-WdacToastLog -Message "Starting configuration checks. Host=$($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion); User=$([System.Security.Principal.WindowsIdentity]::GetCurrent().Name); Interactive=$([Environment]::UserInteractive)."
     $Results = [System.Collections.Generic.List[bool]]::new()
-    $TaskUser = Get-InteractiveUserIdentity
-    $AppIdRegistryPath = "Registry::HKEY_USERS\$($TaskUser.Sid)\Software\Classes\AppUserModelId\$AppId"
-    $RegistryValues = Get-ItemProperty -LiteralPath $AppIdRegistryPath -ErrorAction SilentlyContinue
     $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 
     $Results.Add((Write-ConfigurationCheck -Name 'Installed script' -Passed (Test-Path -LiteralPath $InstalledScript -PathType Leaf) -SuccessMessage $InstalledScript -FailureMessage "The installed script is missing at '$InstalledScript'."))
-    $Results.Add((Write-ConfigurationCheck -Name 'Application identity' -Passed ($null -ne $RegistryValues) -SuccessMessage $AppIdRegistryPath -FailureMessage "The per-user AppUserModelID '$AppId' is not registered at '$AppIdRegistryPath'."))
-    if ($null -ne $RegistryValues) {
-        $RegisteredDisplayName = if ($RegistryValues.PSObject.Properties['DisplayName']) { [string]$RegistryValues.DisplayName } else { $null }
-        $RegisteredShowInSettings = if ($RegistryValues.PSObject.Properties['ShowInSettings']) { $RegistryValues.ShowInSettings } else { $null }
-        $Results.Add((Write-ConfigurationCheck -Name 'Application display name' -Passed ($RegisteredDisplayName -eq $DisplayName) -SuccessMessage "DisplayName is '$DisplayName'." -FailureMessage "Expected DisplayName '$DisplayName', found '$RegisteredDisplayName'."))
-        $Results.Add((Write-ConfigurationCheck -Name 'Application notification settings' -Passed ($null -ne $RegisteredShowInSettings -and [int]$RegisteredShowInSettings -eq 1) -SuccessMessage 'ShowInSettings is enabled.' -FailureMessage "ShowInSettings should be 1, found '$RegisteredShowInSettings'."))
+    if ($IncludeRendererChecks) {
+        $AppIdRegistryPath = "HKCU:\Software\Classes\AppUserModelId\$AppId"
+        $RegistryValues = Get-ItemProperty -LiteralPath $AppIdRegistryPath -ErrorAction SilentlyContinue
+        $Results.Add((Write-ConfigurationCheck -Name 'Application identity' -Passed ($null -ne $RegistryValues) -SuccessMessage $AppIdRegistryPath -FailureMessage "The per-user AppUserModelID '$AppId' is not registered at '$AppIdRegistryPath'."))
+        if ($null -ne $RegistryValues) {
+            $RegisteredDisplayName = if ($RegistryValues.PSObject.Properties['DisplayName']) { [string]$RegistryValues.DisplayName } else { $null }
+            $RegisteredShowInSettings = if ($RegistryValues.PSObject.Properties['ShowInSettings']) { $RegistryValues.ShowInSettings } else { $null }
+            $Results.Add((Write-ConfigurationCheck -Name 'Application display name' -Passed ($RegisteredDisplayName -eq $DisplayName) -SuccessMessage "DisplayName is '$DisplayName'." -FailureMessage "Expected DisplayName '$DisplayName', found '$RegisteredDisplayName'."))
+            $Results.Add((Write-ConfigurationCheck -Name 'Application notification settings' -Passed ($null -ne $RegisteredShowInSettings -and [int]$RegisteredShowInSettings -eq 1) -SuccessMessage 'ShowInSettings is enabled.' -FailureMessage "ShowInSettings should be 1, found '$RegisteredShowInSettings'."))
+        }
     }
 
-    $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task' -Passed ($null -ne $Task) -SuccessMessage "Task '$TaskName' exists." -FailureMessage "Task '$TaskName' does not exist for this user."))
+    $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task' -Passed ($null -ne $Task) -SuccessMessage "Task '$TaskName' exists." -FailureMessage "Computer-level task '$TaskName' does not exist."))
     if ($null -ne $Task) {
-        $ExpectedSid = $TaskUser.Sid
         $TaskAction = @($Task.Actions) | Select-Object -First 1
         $TaskExecute = if ($null -ne $TaskAction) { [string]$TaskAction.Execute } else { '' }
         $TaskArguments = if ($null -ne $TaskAction) { [string]$TaskAction.Arguments } else { '' }
         $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task state' -Passed ($Task.State -ne 'Disabled') -SuccessMessage "Task state is $($Task.State)." -FailureMessage 'The task is disabled.'))
-        $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task user' -Passed ($Task.Principal.UserId -eq $ExpectedSid -and $Task.Principal.LogonType -eq 'InteractiveToken') -SuccessMessage "Task uses InteractiveToken for SID $ExpectedSid." -FailureMessage "Expected InteractiveToken for SID $ExpectedSid; found LogonType '$($Task.Principal.LogonType)' and UserId '$($Task.Principal.UserId)'."))
-        $ActionIsValid = $null -ne $TaskAction -and $TaskExecute -like '*\WindowsPowerShell\v1.0\powershell.exe' -and $TaskArguments -like "*${InstalledScript}*" -and $TaskArguments -like '*-ExecutionPolicy AllSigned*'
-        $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task action' -Passed $ActionIsValid -SuccessMessage "Task launches Windows PowerShell 5.1 with AllSigned and '$InstalledScript'." -FailureMessage "The task action is unexpected. Execute='$TaskExecute'; Arguments='$TaskArguments'."))
+        $PrincipalIsInteractive = $Task.Principal.GroupId -eq 'S-1-5-4' -and $Task.Principal.RunLevel -eq 'Limited'
+        $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task principal' -Passed $PrincipalIsInteractive -SuccessMessage 'Task is assigned to the well-known INTERACTIVE group at least privilege.' -FailureMessage "Expected GroupId S-1-5-4 and Limited run level; found GroupId '$($Task.Principal.GroupId)', UserId '$($Task.Principal.UserId)', LogonType '$($Task.Principal.LogonType)', RunLevel '$($Task.Principal.RunLevel)'."))
+        $ActionIsValid = $null -ne $TaskAction -and $TaskExecute -like '*\WindowsPowerShell\v1.0\powershell.exe' -and $TaskArguments -like "*${InstalledScript}*" -and $TaskArguments -like '*-ExecutionPolicy AllSigned*' -and $TaskArguments -notlike '*-Broker*'
+        $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task action' -Passed $ActionIsValid -SuccessMessage "Task launches the renderer directly with Windows PowerShell 5.1 and AllSigned." -FailureMessage "The task action is unexpected. Execute='$TaskExecute'; Arguments='$TaskArguments'."))
     }
 
     $EventLog = Get-WinEvent -ListLog $LogName -ErrorAction SilentlyContinue
@@ -258,7 +230,6 @@ function Test-WdacToastConfiguration {
 }
 
 function Test-WdacToastInstalled {
-    $AppIdRegistryPath = "HKCU:\Software\Classes\AppUserModelId\$AppId"
     $SourceScript = $PSCommandPath
     $InstalledScriptIsCurrent = Test-Path -LiteralPath $InstalledScript -PathType Leaf
     if (
@@ -277,7 +248,6 @@ function Test-WdacToastInstalled {
 
     return (
         $InstalledScriptIsCurrent -and
-        (Test-Path -LiteralPath $AppIdRegistryPath) -and
         ($null -ne (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue))
     )
 }
@@ -334,47 +304,36 @@ function Install-WdacToast {
         }
     }
 
-    $TaskUser = Get-InteractiveUserIdentity
-    $AppIdRegistryPath = "Registry::HKEY_USERS\$($TaskUser.Sid)\Software\Classes\AppUserModelId\$AppId"
-    New-Item -Path $AppIdRegistryPath -Force | Out-Null
-    New-ItemProperty -Path $AppIdRegistryPath -Name DisplayName -Value $DisplayName -PropertyType String -Force | Out-Null
-    New-ItemProperty -Path $AppIdRegistryPath -Name ShowInSettings -Value 1 -PropertyType DWord -Force | Out-Null
-    Write-WdacToastLog -Message "Registered AppUserModelID '$AppId' for interactive user '$($TaskUser.Name)' with display name '$DisplayName'."
-
     $EscapedScript = [System.Security.SecurityElement]::Escape($InstalledScript)
-    $EscapedUserSid = [System.Security.SecurityElement]::Escape($TaskUser.Sid)
     $TaskXml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>Displays an interactive notification for new WDAC Event ID 3077 records.</Description></RegistrationInfo>
+  <RegistrationInfo><Description>Displays WDAC notifications in the currently interactive user's session.</Description></RegistrationInfo>
   <Triggers><EventTrigger><Enabled>true</Enabled><Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="Microsoft-Windows-CodeIntegrity/Operational"&gt;&lt;Select Path="Microsoft-Windows-CodeIntegrity/Operational"&gt;*[System[EventID=3077]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription><ValueQueries><Value name="EventRecordID">Event/System/EventRecordID</Value></ValueQueries></EventTrigger></Triggers>
-  <Principals><Principal id="Author"><UserId>$EscapedUserSid</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Principals><Principal id="Author"><GroupId>S-1-5-4</GroupId><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings><MultipleInstancesPolicy>Queue</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>false</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT5M</ExecutionTimeLimit><Priority>7</Priority></Settings>
   <Actions Context="Author"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoProfile -NonInteractive -ExecutionPolicy AllSigned -File &quot;$EscapedScript&quot; -EventRecordId &quot;`$(EventRecordID)&quot;</Arguments></Exec></Actions>
 </Task>
 "@
 
     Register-ScheduledTask -TaskName $TaskName -Xml $TaskXml -Force | Out-Null
-    Write-WdacToastLog -Message "Registered Scheduled Task '$TaskName' with InteractiveToken and least privilege for interactive user '$($TaskUser.Name)' (SID $($TaskUser.Sid))."
+    Write-WdacToastLog -Message "Registered Scheduled Task '$TaskName' for the well-known INTERACTIVE group (S-1-5-4) at least privilege."
 }
 
 function Reset-WdacToastInstallation {
     if ([string]::Equals($PSCommandPath, $InstalledScript, [StringComparison]::OrdinalIgnoreCase)) {
         throw "ResetInstallation must be run from the new deployment copy, not '$InstalledScript'."
     }
-    $TaskUser = Get-InteractiveUserIdentity
-    $Registrations = @([pscustomobject]@{ AppId = $AppId; TaskName = $TaskName })
+    $TaskNames = @($TaskName)
     $InstalledConfigurationFile = Join-Path $InstallDirectory 'WDACToast.json'
 
-    # Also remove names recorded by the previous installation. This prevents an
-    # AppId or TaskName rename in a new package from leaving an orphaned task or
-    # notification sender behind.
+    # Also remove the name recorded by the previous installation so renaming the
+    # task in a new package does not leave an orphaned event subscription.
     if (Test-Path -LiteralPath $InstalledConfigurationFile -PathType Leaf) {
         try {
             $Previous = Get-Content -LiteralPath $InstalledConfigurationFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-            if (-not [string]::IsNullOrWhiteSpace([string]$Previous.AppId) -and
-                -not [string]::IsNullOrWhiteSpace([string]$Previous.TaskName)) {
-                $Registrations += [pscustomobject]@{ AppId = [string]$Previous.AppId; TaskName = [string]$Previous.TaskName }
+            if (-not [string]::IsNullOrWhiteSpace([string]$Previous.TaskName)) {
+                $TaskNames += [string]$Previous.TaskName
             }
         }
         catch {
@@ -382,15 +341,13 @@ function Reset-WdacToastInstallation {
         }
     }
 
-    foreach ($Registration in $Registrations) {
-        Unregister-ScheduledTask -TaskName $Registration.TaskName -Confirm:$false -ErrorAction SilentlyContinue
-        $RegistrationPath = "Registry::HKEY_USERS\$($TaskUser.Sid)\Software\Classes\AppUserModelId\$($Registration.AppId)"
-        Remove-Item -LiteralPath $RegistrationPath -Recurse -Force -ErrorAction SilentlyContinue
+    foreach ($RegisteredTaskName in @($TaskNames | Select-Object -Unique)) {
+        Unregister-ScheduledTask -TaskName $RegisteredTaskName -Confirm:$false -ErrorAction SilentlyContinue
     }
 
     Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $StateDirectory -Recurse -Force -ErrorAction SilentlyContinue
-    Write-WdacToastLog -Message "Reset the WDAC toast installation for interactive user '$($TaskUser.Name)' (SID $($TaskUser.Sid))."
+    Write-WdacToastLog -Message 'Reset the WDAC toast task, installed files, and state for the current profile.'
 }
 
 function Get-NamedEventData {
@@ -631,10 +588,10 @@ function Invoke-WdacToast {
     }
 
     if (-not (Test-WdacToastInstalled)) {
-        Write-WdacToastLog -Level WARN -Message 'Installation is incomplete; repairing the installed script, application identity, and Scheduled Task.'
-        Install-WdacToast
+        throw 'The computer-level installation is incomplete. Run the deployment script from an elevated Windows PowerShell session to repair it.'
     }
 
+    Ensure-CurrentUserAppIdentity
     [void](Test-WdacToastConfiguration -IncludeRendererChecks)
     Write-WdacToastLog -Message "Processing WDAC EventRecordId $EventRecordId."
     $XPath = "*[System[(EventID=3077) and (EventRecordID=$EventRecordId)]]"

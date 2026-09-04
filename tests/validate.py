@@ -21,13 +21,10 @@ required_collector_fragments = [
     "$InstalledScriptIsCurrent = $SourceHash -eq $InstalledHash",
     "The installed script differs from the deployment source and will be upgraded",
     "function Install-WdacToast",
-    "function Get-InteractiveUserIdentity",
-    "Get-CimInstance -ClassName Win32_Process",
-    "No logged-on Explorer user was found",
+    "function Ensure-CurrentUserAppIdentity",
     "function Initialize-WdacToastStateDirectory",
-    "[System.Security.Principal.SecurityIdentifier]::new('S-1-5-11')",
-    "[System.Security.AccessControl.FileSystemRights]::Modify",
-    'Registry::HKEY_USERS\\$($TaskUser.Sid)',
+    "Join-Path $env:LOCALAPPDATA 'Company\\WDACToast'",
+    "NotificationState-$CurrentSid.json",
     "$InstalledCommand.Parameters.ContainsKey('EventRecordId')",
     "An explicit installation run must always copy the invoking source",
     "if (-not (Test-WdacToastInstalled))",
@@ -80,6 +77,14 @@ for fragment in required_collector_fragments:
 assert "$env\\:ProgramData" not in collector
 assert "$Node.'#text'" not in collector
 assert "ExecutionPolicy Bypass" not in collector
+assert "S-1-5-18" not in collector
+assert "WTSQueryUserToken" not in collector
+assert "DuplicateTokenEx" not in collector
+assert "CreateProcessAsUser" not in collector
+assert "ServiceAccount" not in collector
+assert "AuthenticatedUsers" not in collector
+assert "Set-Acl" not in collector
+assert "Registry::HKEY_USERS" not in collector
 assert not re.search(r"\bGet-ItemPropertyValue\s+-", collector)
 assert "View more details" not in collector
 assert '"File: $(Limit-Text' not in collector
@@ -103,7 +108,6 @@ assert [path.name for path in ROOT.glob("*.ps1")] == ["Show-WDACToast.ps1"]
 match = re.search(r'\$TaskXml = @"\n(.*?)\n"@', collector, re.DOTALL)
 assert match, "scheduled-task XML template was not found"
 xml = match.group(1)
-xml = xml.replace("$EscapedUserSid", "S-1-5-21-1")
 xml = xml.replace("$EscapedScript", r"C:\Program Files\Company\WDACToast\Show-WDACToast.ps1")
 xml = xml.replace("$EscapedAppId", "Company.WDACToast")
 xml = xml.replace("$EscapedDisplayName", "Company Security")
@@ -113,6 +117,14 @@ xml = xml.replace("$EscapedInstallDirectory", r"C:\Program Files\Company\WDACToa
 xml = xml.replace("$EscapedTaskName", "Company WDAC Block Notification")
 xml = xml.replace("`$(EventRecordID)", "123")
 ET.fromstring(xml)
+task = ET.fromstring(xml)
+ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+assert task.findtext(".//t:GroupId", namespaces=ns) == "S-1-5-4"
+assert task.findtext(".//t:RunLevel", namespaces=ns) == "LeastPrivilege"
+assert task.find(".//t:UserId", namespaces=ns) is None
+assert task.find(".//t:LogonType", namespaces=ns) is None
+assert "-Broker" not in task.findtext(".//t:Arguments", namespaces=ns)
+assert "InteractiveToken" not in xml
 
 parsed_configuration = json.loads(configuration)
 assert parsed_configuration["ActionLabel"] == "Request Review"
