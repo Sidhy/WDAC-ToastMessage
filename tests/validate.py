@@ -100,7 +100,8 @@ required_collector_fragments = [
     "PolicyVersion = $PolicyVersion",
     '<text hint-maxLines="1">{2}</text>',
     '<text hint-maxLines="2">{3}</text>',
-    '<group><subgroup>{5}</subgroup></group>',
+    '<group><subgroup>{4}</subgroup></group>',
+    'hint-style="body" hint-wrap="true" hint-maxLines="3"',
     'template="ToastGeneric" lang="{0}"',
     '(& $Escape $Strings.Dismiss)',
     '(& $Escape $LocalizedActionLabel)',
@@ -152,6 +153,8 @@ def function_body(name: str) -> str:
     next_function = collector.find("\nfunction ", start + 1)
     return collector[start : next_function if next_function != -1 else len(collector)]
 
+assert "ToUpperInvariant()" not in function_body("Show-ToastNotification")
+assert "-FileName $FileName" not in function_body("Invoke-WdacToast")
 assert "Remove-Item -LiteralPath $InstallationMarkerPath" in function_body("Uninstall-WdacToast")
 
 upgrade_body = function_body("Upgrade-WdacToastInstallation")
@@ -292,5 +295,7 @@ for tag, language in languages.items():
     strings = language.findall("string")
     assert {node.attrib["name"] for node in strings} == required_strings, f"{tag} has incomplete localization"
     assert all((node.text or "").strip() for node in strings), f"{tag} has an empty localized string"
+    detail_labels = [next(node.text for node in strings if node.attrib["name"] == name) for name in ("BlockedAppPath", "CalledByAppPath", "BlockedByPolicy")]
+    assert all(label.endswith(":") and len(label) <= 24 for label in detail_labels), f"{tag} has an overly long detail label"
 
 print("Static WDAC collector and task XML checks passed.")
