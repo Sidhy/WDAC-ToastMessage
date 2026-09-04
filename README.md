@@ -168,8 +168,12 @@ session:
 Reset removes the configured Scheduled Task, installation directory, and state
 for the account running reset, and then installs the current package. It reads
 the previous installed JSON first so a renamed `TaskName` is also removed. The
-script deliberately does not mount, enumerate, or modify other users' registry
-hives; an existing per-user notification identity is inert and is safely
+final reset-cleanup message is written before the old state directory is deleted,
+so logging cannot recreate that directory during cleanup. The subsequent fresh
+installation creates a new state directory and log, while old logs and duplicate
+state remain deleted. The script deliberately does not mount, enumerate, or
+modify other users' registry hives; an existing per-user notification identity
+is inert and is safely
 refreshed if that user later receives another toast. Do not combine
 `-ResetInstallation` with `-EventRecordId`.
 

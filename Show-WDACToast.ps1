@@ -428,9 +428,12 @@ function Reset-WdacToastInstallation {
         Unregister-ScheduledTask -TaskName $RegisteredTaskName -Confirm:$false -ErrorAction SilentlyContinue
     }
 
-    Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $StateDirectory -Recurse -Force -ErrorAction SilentlyContinue
     Write-WdacToastLog -Message 'Reset the WDAC toast task, installed files, and state for the current profile.'
+    Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    # Keep this as the final state-directory operation. Write-WdacToastLog
+    # creates its file-log directory, so logging after this point would restore
+    # state that reset is meant to discard before the new installation starts.
+    Remove-Item -LiteralPath $StateDirectory -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 function Uninstall-WdacToast {
