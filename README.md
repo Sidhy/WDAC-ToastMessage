@@ -110,7 +110,7 @@ Command-line parameters take precedence over matching JSON properties:
 | `UpgradeFromInstallDirectory` | Legacy fallback for `Upgrade`: identifies an old directory only when no machine installation marker exists. |
 | `ResetInstallation` | Removes and rebuilds the installation; valid only with `EventRecordId = 0` and only from a deployment copy outside the installed directory. |
 | `Uninstall` | Removes the requested and installed-configuration task names, then the installation directory; valid only with `EventRecordId = 0` and mutually exclusive with `ResetInstallation`. |
-| `CleanupLogs` | With `Uninstall`, also removes `%LOCALAPPDATA%\Company\WDACToast` for the account running the command; it cannot be used by itself. |
+| `CleanupLogs` | **Current-account scope:** with `Uninstall`, also removes only `%LOCALAPPDATA%\Company\WDACToast` for the account running the command; it cannot be used by itself and never enumerates profiles. |
 
 The script enables strict mode and stops on errors. A successful installation or
 suppressed duplicate exits `0`; an uncaught installation or rendering error is
@@ -237,6 +237,8 @@ is inert and is safely
 refreshed if that user later receives another toast. Do not combine
 `-ResetInstallation` with `-EventRecordId`.
 
+### Cleanup scope 1: uninstall and optional current-account data
+
 To uninstall from an elevated deployment copy while preserving per-user logs
 and duplicate state by default:
 
@@ -252,6 +254,29 @@ interactive user's profile:
 ```powershell
 & 'C:\Path\To\Current\Show-WDACToast.ps1' -Uninstall -CleanupLogs -Verbose
 ```
+
+### Cleanup scope 2: device-wide per-profile data remediation
+
+Device-wide cleanup is a distinct, administrative operation. After uninstall,
+deploy the separately signed `Cleanup-WDACToastAllProfiles.ps1` as an elevated
+administrator or as an Intune remediation running as SYSTEM:
+
+```powershell
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File .\Cleanup-WDACToastAllProfiles.ps1 -Verbose
+```
+
+The remediation reads local profile paths from
+`HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList`, expands each
+`ProfileImagePath`, and considers only the exact
+`AppData\Local\Company\WDACToast` child. It does not load `NTUSER.DAT`, inspect
+or modify `HKEY_USERS`, delete whole profiles, or broaden cleanup when a path is
+missing. Use `-WhatIf` to audit its targets before deployment.
+
+This scope deletes users' WDAC block diagnostics, operational logs, and
+duplicate-suppression state. Those records can contain file paths and process
+details, so organization-wide deletion should follow the organization's
+retention, incident-response, notice, and privacy requirements. Conversely,
+machine uninstall by itself intentionally retains that per-user data.
 
 `-Uninstall` requires `EventRecordId = 0`, cannot be combined with
 `-ResetInstallation`, and returns a nonzero exit code if installed configuration
@@ -447,8 +472,18 @@ deleting files and removes the task name recorded there, which protects task
 renames from leaving an orphan. The uninstall intentionally does not enumerate
 profiles or remove each user's HKCU identity, logs, or duplicate state. Optional
 `-CleanupLogs` affects only Intune's SYSTEM profile in this context, not every
-interactive user's profile. Removing other users' data would require additional
-privilege and profile-hive manipulation that this project avoids.
+interactive user's profile. Removing other users' data requires additional
+privilege; use the separately packaged and signed
+`Cleanup-WDACToastAllProfiles.ps1` remediation above when policy requires it.
+That remediation enumerates the machine profile list but never loads or changes
+user registry hives.
+
+Machine uninstall also leaves each user's
+`HKCU\Software\Classes\AppUserModelId\<AppId>` identity in place. With the
+Scheduled Task and renderer removed, this registration is inert: it executes
+nothing, collects nothing, and does not display a toast. The device-wide data
+remediation deliberately leaves it untouched rather than loading offline user
+hives; a future installed renderer can safely refresh it on demand.
 
 ### 3. Detection rule
 

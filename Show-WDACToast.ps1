@@ -46,8 +46,8 @@ param(
     # state unless CleanupLogs is also specified.
     [switch]$Uninstall,
 
-    # Valid only with Uninstall. This affects the profile of the account that
-    # runs the command (for example, SYSTEM when invoked by Intune).
+    # Valid only with Uninstall. Deletes only the LOCALAPPDATA state belonging
+    # to the execution account (for example, only SYSTEM's state under Intune).
     [switch]$CleanupLogs
 )
 
