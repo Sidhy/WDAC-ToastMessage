@@ -347,10 +347,12 @@ review format remains consistent across Code Integrity provider versions.
 All of this static text, including **Unknown file**, **Not provided**, detail
 labels, and built-in action labels, comes from the selected language entry.
 
-The action row provides **More details**, **Dismiss**, and the configurable
-**Request Review** action. **More details** opens the user-private JSON diagnostic
-for the event, **Dismiss** closes the notification, and **Request Review** opens
-the configured HTTPS `SupportUri`.
+The action row provides **Dismiss** and the configurable **Request Review**
+action. **Dismiss** closes the notification, and **Request Review** opens the
+configured HTTPS `SupportUri`. The event's user-private JSON diagnostic remains
+available in the state directory for support workflows, but it is not linked
+from the toast because Windows does not reliably activate a local `file:` URI
+from a protocol action on this unpackaged notification.
 When those files are still available, Windows version metadata supplies the
 description, product, publisher, and version for both the blocked file and its
 caller. That metadata, the raw WDAC status, signing levels, hashes, activity ID,

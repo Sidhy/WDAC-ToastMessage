@@ -99,7 +99,6 @@ required_collector_fragments = [
     '<text hint-maxLines="2">{3}</text>',
     '<group><subgroup>{5}</subgroup></group>',
     'template="ToastGeneric" lang="{0}"',
-    '(& $Escape $Strings.MoreDetails)',
     '(& $Escape $Strings.Dismiss)',
     '(& $Escape $LocalizedActionLabel)',
     "Write-Error -ErrorRecord $Failure",
@@ -119,6 +118,9 @@ assert "Set-Acl" not in collector
 assert "Registry::HKEY_USERS" not in collector
 assert not re.search(r"\bGet-ItemPropertyValue\s+-", collector)
 assert "View more details" not in collector
+assert "$Strings.MoreDetails" not in collector
+assert "[string]$DetailsUri" not in collector
+assert "-DetailsUri $DetailsUri" not in collector
 assert '"File: $(Limit-Text' not in collector
 assert '"Location: $(Limit-Text' not in collector
 assert '"Requested by: $(Limit-Text' not in collector
@@ -265,7 +267,11 @@ expected_languages = {"en", "it-IT", "nl-NL", "de-DE", "fr-FR", "uk-UA", "da-DK"
 languages = {node.attrib["tag"]: node for node in localization_root.findall("language")}
 assert set(languages) == expected_languages
 required_strings = {node.attrib["name"] for node in languages["en"].findall("string")}
-assert required_strings == {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "MoreDetails", "Dismiss", "RequestReview"}
+assert required_strings == {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "Dismiss", "RequestReview"}
+english_strings = {node.attrib["name"]: node.text for node in languages["en"].findall("string")}
+assert english_strings["BlockedAppPath"] == "Blocked App:"
+assert english_strings["CalledByAppPath"] == "Executed by:"
+assert english_strings["BlockedByPolicy"] == "WDAC Policy:"
 for tag, language in languages.items():
     strings = language.findall("string")
     assert {node.attrib["name"] for node in strings} == required_strings, f"{tag} has incomplete localization"

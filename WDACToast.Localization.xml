@@ -5,11 +5,10 @@
     <string name="Message">This application is not approved by your organization or could put this device and company data at risk.</string>
     <string name="UnknownFile">Unknown file</string>
     <string name="NotProvided">Not provided</string>
-    <string name="BlockedAppPath">Blocked app path</string>
-    <string name="CalledByAppPath">Called by app path</string>
-    <string name="BlockedByPolicy">Blocked by policy name and version</string>
+    <string name="BlockedAppPath">Blocked App:</string>
+    <string name="CalledByAppPath">Executed by:</string>
+    <string name="BlockedByPolicy">WDAC Policy:</string>
     <string name="VersionFormat">{0} (version {1})</string>
-    <string name="MoreDetails">More details</string>
     <string name="Dismiss">Dismiss</string>
     <string name="RequestReview">Request Review</string>
   </language>
@@ -22,7 +21,6 @@
     <string name="CalledByAppPath">Percorso dell'app chiamante</string>
     <string name="BlockedByPolicy">Nome e versione dei criteri di blocco</string>
     <string name="VersionFormat">{0} (versione {1})</string>
-    <string name="MoreDetails">Altri dettagli</string>
     <string name="Dismiss">Ignora</string>
     <string name="RequestReview">Richiedi revisione</string>
   </language>
@@ -35,7 +33,6 @@
     <string name="CalledByAppPath">Aangeroepen door app-pad</string>
     <string name="BlockedByPolicy">Naam en versie van blokkerend beleid</string>
     <string name="VersionFormat">{0} (versie {1})</string>
-    <string name="MoreDetails">Meer details</string>
     <string name="Dismiss">Sluiten</string>
     <string name="RequestReview">Beoordeling aanvragen</string>
   </language>
@@ -48,7 +45,6 @@
     <string name="CalledByAppPath">Aufgerufen durch App-Pfad</string>
     <string name="BlockedByPolicy">Name und Version der blockierenden Richtlinie</string>
     <string name="VersionFormat">{0} (Version {1})</string>
-    <string name="MoreDetails">Weitere Details</string>
     <string name="Dismiss">Schließen</string>
     <string name="RequestReview">Überprüfung anfordern</string>
   </language>
@@ -61,7 +57,6 @@
     <string name="CalledByAppPath">Chemin de l'application appelante</string>
     <string name="BlockedByPolicy">Nom et version de la stratégie de blocage</string>
     <string name="VersionFormat">{0} (version {1})</string>
-    <string name="MoreDetails">Plus de détails</string>
     <string name="Dismiss">Fermer</string>
     <string name="RequestReview">Demander une révision</string>
   </language>
@@ -74,7 +69,6 @@
     <string name="CalledByAppPath">Шлях до програми, що викликала</string>
     <string name="BlockedByPolicy">Назва та версія політики блокування</string>
     <string name="VersionFormat">{0} (версія {1})</string>
-    <string name="MoreDetails">Докладніше</string>
     <string name="Dismiss">Закрити</string>
     <string name="RequestReview">Надіслати на перевірку</string>
   </language>
@@ -87,7 +81,6 @@
     <string name="CalledByAppPath">Kaldt af appsti</string>
     <string name="BlockedByPolicy">Navn og version på blokerende politik</string>
     <string name="VersionFormat">{0} (version {1})</string>
-    <string name="MoreDetails">Flere oplysninger</string>
     <string name="Dismiss">Luk</string>
     <string name="RequestReview">Anmod om gennemgang</string>
   </language>
@@ -100,7 +93,6 @@
     <string name="CalledByAppPath">Ruta de la aplicación que realizó la llamada</string>
     <string name="BlockedByPolicy">Nombre y versión de la directiva de bloqueo</string>
     <string name="VersionFormat">{0} (versión {1})</string>
-    <string name="MoreDetails">Más detalles</string>
     <string name="Dismiss">Cerrar</string>
     <string name="RequestReview">Solicitar revisión</string>
   </language>
@@ -113,7 +105,6 @@
     <string name="CalledByAppPath">Ruta de la aplicación que realizó la llamada</string>
     <string name="BlockedByPolicy">Nombre y versión de la directiva de bloqueo</string>
     <string name="VersionFormat">{0} (versión {1})</string>
-    <string name="MoreDetails">Más detalles</string>
     <string name="Dismiss">Cerrar</string>
     <string name="RequestReview">Solicitar revisión</string>
   </language>
@@ -126,7 +117,6 @@
     <string name="CalledByAppPath">Caminho da aplicação que efetuou a chamada</string>
     <string name="BlockedByPolicy">Nome e versão da política de bloqueio</string>
     <string name="VersionFormat">{0} (versão {1})</string>
-    <string name="MoreDetails">Mais detalhes</string>
     <string name="Dismiss">Fechar</string>
     <string name="RequestReview">Pedir revisão</string>
   </language>
@@ -139,7 +129,6 @@
     <string name="CalledByAppPath">Caminho do aplicativo que fez a chamada</string>
     <string name="BlockedByPolicy">Nome e versão da política de bloqueio</string>
     <string name="VersionFormat">{0} (versão {1})</string>
-    <string name="MoreDetails">Mais detalhes</string>
     <string name="Dismiss">Fechar</string>
     <string name="RequestReview">Solicitar revisão</string>
   </language>

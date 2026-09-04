@@ -313,7 +313,7 @@ function Get-WdacToastStrings {
     foreach ($StringNode in @($Selected.string)) {
         $Strings[[string]$StringNode.name] = [string]$StringNode.InnerText
     }
-    $RequiredStrings = @('Title', 'Message', 'UnknownFile', 'NotProvided', 'BlockedAppPath', 'CalledByAppPath', 'BlockedByPolicy', 'VersionFormat', 'MoreDetails', 'Dismiss', 'RequestReview')
+    $RequiredStrings = @('Title', 'Message', 'UnknownFile', 'NotProvided', 'BlockedAppPath', 'CalledByAppPath', 'BlockedByPolicy', 'VersionFormat', 'Dismiss', 'RequestReview')
     foreach ($RequiredString in $RequiredStrings) {
         if (-not $Strings.ContainsKey($RequiredString) -or [string]::IsNullOrWhiteSpace([string]$Strings[$RequiredString])) {
             throw "Language '$($Selected.tag)' is missing required string '$RequiredString' in '$LocalizationFile'."
@@ -905,7 +905,6 @@ function Show-ToastNotification {
         [Parameter(Mandatory)][string]$Message,
         [Parameter(Mandatory)][string]$FileName,
         [Parameter(Mandatory)][System.Collections.IDictionary]$Details,
-        [Parameter(Mandatory)][string]$DetailsUri,
         [Parameter(Mandatory)][string]$Language,
         [Parameter(Mandatory)][System.Collections.IDictionary]$Strings
     )
@@ -937,8 +936,8 @@ function Show-ToastNotification {
     }
 
     $LocalizedActionLabel = if ($ActionLabel -eq 'Request Review') { $Strings.RequestReview } else { $ActionLabel }
-    $ActionXml = '<actions><action content="{0}" arguments="{1}" activationType="protocol"/><action content="{2}" arguments="dismiss" activationType="system"/><action content="{3}" arguments="{4}" activationType="protocol"/></actions>' -f
-        (& $Escape $Strings.MoreDetails), (& $Escape $DetailsUri), (& $Escape $Strings.Dismiss), (& $Escape $LocalizedActionLabel), (& $Escape $SupportUri)
+    $ActionXml = '<actions><action content="{0}" arguments="dismiss" activationType="system"/><action content="{1}" arguments="{2}" activationType="protocol"/></actions>' -f
+        (& $Escape $Strings.Dismiss), (& $Escape $LocalizedActionLabel), (& $Escape $SupportUri)
 
     $ImageXml = ''
     if (-not [string]::IsNullOrWhiteSpace($LogoPath)) {
@@ -1118,15 +1117,12 @@ function Invoke-WdacToast {
         ($Localization.Strings.CalledByAppPath) = $ProcessPath
         ($Localization.Strings.BlockedByPolicy) = $PolicyDisplay
     }
-    $DetailsUri = ([Uri](Resolve-Path -LiteralPath $LogFile).Path).AbsoluteUri
-
     Write-WdacToastLog -Message "Submitting toast to the Windows notification platform with AppId '$AppId'."
     Show-ToastNotification `
         -Title $Localization.Strings.Title `
         -Message $Localization.Strings.Message `
         -FileName $FileName `
         -Details $ToastDetails `
-        -DetailsUri $DetailsUri `
         -Language $Localization.Language `
         -Strings $Localization.Strings
     Write-WdacToastLog -Message 'The Windows notification platform accepted the toast. Windows can still suppress its presentation because of Do Not Disturb/Focus Assist or per-app notification settings.'
