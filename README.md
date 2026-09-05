@@ -4,9 +4,9 @@
 
 ## How it works
 
-The deployment remains **PowerShell-only**. It uses an unpackaged per-user URI protocol (`company-wdactoast:`) for Copy Alert activation; the protocol command starts the same installed, signed `Show-WDACToast.ps1` in STA mode. No helper application, COM local server, or packaged Windows App SDK application is installed.
+The deployment remains **PowerShell-only**. No helper application, custom URI protocol, COM local server, or packaged Windows App SDK application is installed.
 
-The script has three entry paths:
+The script has two entry paths:
 
 1. When run without an event record ID, it installs itself under `C:\Program Files\Company\WDACToast` and creates one event-triggered Scheduled Task assigned to the well-known INTERACTIVE SID (`S-1-5-4`).
 2. When an event fires while an interactive user is signed in, Task Scheduler runs
@@ -14,11 +14,8 @@ The script has three entry paths:
    renderer creates that user's toast application identity, retrieves the exact
    Event ID 3077 record, writes user-profile diagnostics, applies duplicate
    suppression, and submits a toast to Windows.
-3. When **Copy Alert** is selected, Windows opens the registered `company-wdactoast:` URI with the same signed script. The `-ActivationUri` entry point validates the complete URI and token, reads the token-named state file, updates the current user’s clipboard, replaces the pending toast, and exits without application UI.
 
-The application identity and copy-alert protocol are created on demand in the
-renderer's `HKCU`, so a user who signs in after deployment needs no separate
-installation. A missing machine installation must be repaired by rerunning the
+The application identity is created on demand in the renderer's `HKCU`, so a user who signs in after deployment needs no separate installation. A missing machine installation must be repaired by rerunning the
 deployment script elevated; a standard-user renderer never attempts an
 administrative repair.
 
@@ -378,11 +375,7 @@ review format remains consistent across Code Integrity provider versions.
 All of this static text, including **Unknown file**, **Not provided**, detail
 labels, and built-in action labels, comes from the selected language entry.
 
-The action row provides localized **Copy Alert** and configurable **Request Review** actions. Both are protocol actions with `afterActivationBehavior="pendingUpdate"`, keeping the toast available for further review. Windows’ small standard close button is the only dismiss control. **Request Review** opens the
-configured HTTPS `SupportUri`. After Copy Alert succeeds, the same `AppId`, deterministic `Tag` (`wdac-<record-id>`), and `Group` (`wdac-blocks`) are used to replace the toast immediately with localized copied-confirmation text and the Review action. Clipboard failure instead submits a localized failure replacement, preventing a toast from remaining pending. The event's user-private JSON diagnostic remains
-available in the state directory for support workflows, but it is not linked
-from the toast because Windows does not reliably activate a local `file:` URI
-from a protocol action on this unpackaged notification.
+The action row provides a localized **Dismiss** action and a configurable/localized **Request Review** action. **Dismiss** uses Windows system activation to close the notification. **Request Review** opens the configured HTTPS `SupportUri` and uses `afterActivationBehavior="pendingUpdate"` so the notification remains available while the review page opens. The event's user-private JSON diagnostic remains available in the state directory for support workflows, but it is not linked from the toast.
 When those files are still available, Windows version metadata supplies the
 description, product, publisher, and version for both the blocked file and its
 caller. That metadata, the raw WDAC status, signing levels, hashes, activity ID,
@@ -463,7 +456,6 @@ toast submission; this does not remove diagnostic JSON or the text log.
 - Dynamic event values and configured action values are XML escaped before toast XML is created.
 - The toast action accepts only a configured HTTPS URI.
 - Event content is never used to construct a command or executable action.
-- Copy activation accepts only the exact `company-wdactoast://copy?alert=<token>` URI shape with a 64-character lowercase hexadecimal token. The token maps only to a file under the current user’s `%LOCALAPPDATA%`; the saved AppId, Tag, and Group are validated before use.
 - The state file is replaced atomically, and Scheduled Task instances are queued to prevent concurrent state updates.
 - No execution-policy bypass is used.
 - Raw status codes remain in diagnostics; unvalidated status-to-text mappings are not presented to users.
@@ -544,14 +536,7 @@ privilege; use the separately packaged and signed
 That remediation enumerates the machine profile list but never loads or changes
 user registry hives.
 
-Machine uninstall removes the AppUserModelID and `company-wdactoast` protocol
-from the account running uninstall. It cannot edit other users' unloaded HKCU
-hives, so those profiles retain both registrations. With the Scheduled Task and
-installed script removed, their protocol command points to a missing file and is
-inert: it executes nothing, collects nothing, and does not display a toast. The
-device-wide data remediation deliberately leaves these keys untouched rather
-than loading offline user hives; a future installed renderer safely refreshes
-them on demand.
+Machine uninstall removes the AppUserModelID from the account running uninstall. It cannot edit other users' unloaded HKCU hives, so those profiles retain their application identity. The device-wide data remediation deliberately leaves these keys untouched rather than loading offline user hives; a future installed renderer safely refreshes them on demand.
 
 ### 3. Detection rule
 
@@ -651,29 +636,6 @@ stale installed copy cannot update code that it does not contain:
 
 (Get-Command $installed).Parameters.ContainsKey('EventRecordId')
 ```
-
-### Troubleshoot Copy Alert
-
-The `company-wdactoast` URI registration is stored per user. The renderer
-refreshes it when that user next receives a notification. After deploying the
-corrected script, generate a new WDAC toast for each affected user, or explicitly
-refresh that user's
-`HKCU\Software\Classes\company-wdactoast\shell\open\command` registration with
-the corrected command. This ensures that Copy Alert launches and passes through
-the configured execution policy while retaining the STA host required by
-`Windows.Clipboard`.
-
-For an explicit refresh, run the following as the affected user, using the
-installed path and execution policy from that deployment:
-
-```powershell
-$installed = 'C:\Program Files\Company\WDACToast\Show-WDACToast.ps1'
-$executionPolicy = 'AllSigned' # Or Bypass, matching the deployment configuration.
-$protocolCommand = "`"$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -NonInteractive -Sta -WindowStyle Hidden -ExecutionPolicy $executionPolicy -File `"$installed`" -ActivationUri `"%1`" -ExecutionPolicy $executionPolicy"
-Set-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\company-wdactoast\shell\open\command' -Value $protocolCommand
-```
-
-Validate toast branding, support-link activation, Focus Assist behavior, duplicate suppression, Fast User Switching, and task history on every supported Windows build.
 
 ### Troubleshoot missing WinRT types
 
