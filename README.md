@@ -663,6 +663,16 @@ the corrected command. This ensures that Copy Alert launches and passes through
 the configured execution policy while retaining the STA host required by
 `Windows.Clipboard`.
 
+For an explicit refresh, run the following as the affected user, using the
+installed path and execution policy from that deployment:
+
+```powershell
+$installed = 'C:\Program Files\Company\WDACToast\Show-WDACToast.ps1'
+$executionPolicy = 'AllSigned' # Or Bypass, matching the deployment configuration.
+$protocolCommand = "`"$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -NonInteractive -Sta -WindowStyle Hidden -ExecutionPolicy $executionPolicy -File `"$installed`" -ActivationUri `"%1`" -ExecutionPolicy $executionPolicy"
+Set-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\company-wdactoast\shell\open\command' -Value $protocolCommand
+```
+
 Validate toast branding, support-link activation, Focus Assist behavior, duplicate suppression, Fast User Switching, and task history on every supported Windows build.
 
 ### Troubleshoot missing WinRT types
