@@ -38,7 +38,7 @@
     <string name="ReportActivityId">Activity ID</string>
     <string name="ReportProvider">Provider</string>
     <string name="ReportRecordId">Record ID</string>
-    <string name="ReportExactErrorHeading">Exact error details</string>
+    <string name="ReportExactErrorHeading">Blocked Application Details: {0}</string>
     <string name="ReportCopyButton">Copy</string>
     <string name="ReportCopySuccess">Error details copied.</string>
     <string name="ReportCopyFailure">Copy failed. The error details are selected; copy them manually.</string>
@@ -88,7 +88,7 @@
     <string name="ReportActivityId">Activity ID</string>
     <string name="ReportProvider">Provider</string>
     <string name="ReportRecordId">Record ID</string>
-    <string name="ReportExactErrorHeading">Dettagli esatti dell’errore</string>
+    <string name="ReportExactErrorHeading">Dettagli dell’applicazione bloccata: {0}</string>
     <string name="ReportCopyButton">Copia</string>
     <string name="ReportCopySuccess">Dettagli dell’errore copiati.</string>
     <string name="ReportCopyFailure">Copia non riuscita. I dettagli dell’errore sono selezionati; copiali manualmente.</string>
@@ -138,7 +138,7 @@
     <string name="ReportActivityId">Activity ID</string>
     <string name="ReportProvider">Provider</string>
     <string name="ReportRecordId">Record ID</string>
-    <string name="ReportExactErrorHeading">Exacte foutdetails</string>
+    <string name="ReportExactErrorHeading">Details van geblokkeerde toepassing: {0}</string>
     <string name="ReportCopyButton">Kopiëren</string>
     <string name="ReportCopySuccess">Foutdetails gekopieerd.</string>
     <string name="ReportCopyFailure">Kopiëren mislukt. De foutdetails zijn geselecteerd; kopieer ze handmatig.</string>
@@ -188,7 +188,7 @@
     <string name="ReportActivityId">Activity ID</string>
     <string name="ReportProvider">Provider</string>
     <string name="ReportRecordId">Record ID</string>
-    <string name="ReportExactErrorHeading">Genaue Fehlerdetails</string>
+    <string name="ReportExactErrorHeading">Details zur blockierten Anwendung: {0}</string>
     <string name="ReportCopyButton">Kopieren</string>
     <string name="ReportCopySuccess">Fehlerdetails kopiert.</string>
     <string name="ReportCopyFailure">Kopieren fehlgeschlagen. Die Fehlerdetails sind markiert; kopieren Sie sie manuell.</string>
@@ -238,7 +238,7 @@
     <string name="ReportActivityId">Activity ID</string>
     <string name="ReportProvider">Provider</string>
     <string name="ReportRecordId">Record ID</string>
-    <string name="ReportExactErrorHeading">Détails exacts de l’erreur</string>
+    <string name="ReportExactErrorHeading">Détails de l’application bloquée : {0}</string>
     <string name="ReportCopyButton">Copier</string>
     <string name="ReportCopySuccess">Détails de l’erreur copiés.</string>
     <string name="ReportCopyFailure">Échec de la copie. Les détails de l’erreur sont sélectionnés ; copiez-les manuellement.</string>
@@ -288,7 +288,7 @@
     <string name="ReportActivityId">Activity ID</string>
     <string name="ReportProvider">Provider</string>
     <string name="ReportRecordId">Record ID</string>
-    <string name="ReportExactErrorHeading">Точні відомості про помилку</string>
+    <string name="ReportExactErrorHeading">Відомості про заблоковану програму: {0}</string>
     <string name="ReportCopyButton">Копіювати</string>
     <string name="ReportCopySuccess">Відомості про помилку скопійовано.</string>
     <string name="ReportCopyFailure">Не вдалося скопіювати. Відомості про помилку виділено; скопіюйте їх вручну.</string>
@@ -338,7 +338,7 @@
     <string name="ReportActivityId">Activity ID</string>
     <string name="ReportProvider">Provider</string>
     <string name="ReportRecordId">Record ID</string>
-    <string name="ReportExactErrorHeading">Nøjagtige fejloplysninger</string>
+    <string name="ReportExactErrorHeading">Oplysninger om blokeret program: {0}</string>
     <string name="ReportCopyButton">Kopiér</string>
     <string name="ReportCopySuccess">Fejloplysningerne er kopieret.</string>
     <string name="ReportCopyFailure">Kopieringen mislykkedes. Fejloplysningerne er markeret; kopiér dem manuelt.</string>
@@ -388,7 +388,7 @@
     <string name="ReportActivityId">Activity ID</string>
     <string name="ReportProvider">Provider</string>
     <string name="ReportRecordId">Record ID</string>
-    <string name="ReportExactErrorHeading">Detalles exactos del error</string>
+    <string name="ReportExactErrorHeading">Detalles de la aplicación bloqueada: {0}</string>
     <string name="ReportCopyButton">Copiar</string>
     <string name="ReportCopySuccess">Detalles del error copiados.</string>
     <string name="ReportCopyFailure">Error al copiar. Los detalles del error están seleccionados; cópielos manualmente.</string>
@@ -438,7 +438,7 @@
     <string name="ReportActivityId">Activity ID</string>
     <string name="ReportProvider">Provider</string>
     <string name="ReportRecordId">Record ID</string>
-    <string name="ReportExactErrorHeading">Detalles exactos del error</string>
+    <string name="ReportExactErrorHeading">Detalles de la aplicación bloqueada: {0}</string>
     <string name="ReportCopyButton">Copiar</string>
     <string name="ReportCopySuccess">Se copiaron los detalles del error.</string>
     <string name="ReportCopyFailure">No se pudo copiar. Los detalles del error están seleccionados; copialos manualmente.</string>
@@ -488,7 +488,7 @@
     <string name="ReportActivityId">Activity ID</string>
     <string name="ReportProvider">Provider</string>
     <string name="ReportRecordId">Record ID</string>
-    <string name="ReportExactErrorHeading">Detalhes exatos do erro</string>
+    <string name="ReportExactErrorHeading">Detalhes da aplicação bloqueada: {0}</string>
     <string name="ReportCopyButton">Copiar</string>
     <string name="ReportCopySuccess">Detalhes do erro copiados.</string>
     <string name="ReportCopyFailure">Falha ao copiar. Os detalhes do erro estão selecionados; copie-os manualmente.</string>
@@ -538,7 +538,7 @@
     <string name="ReportActivityId">Activity ID</string>
     <string name="ReportProvider">Provider</string>
     <string name="ReportRecordId">Record ID</string>
-    <string name="ReportExactErrorHeading">Detalhes exatos do erro</string>
+    <string name="ReportExactErrorHeading">Detalhes do aplicativo bloqueado: {0}</string>
     <string name="ReportCopyButton">Copiar</string>
     <string name="ReportCopySuccess">Detalhes do erro copiados.</string>
     <string name="ReportCopyFailure">Falha ao copiar. Os detalhes do erro estão selecionados; copie-os manualmente.</string>
