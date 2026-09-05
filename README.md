@@ -665,12 +665,16 @@ $installed = "$env:ProgramFiles\Company\WDACToast\Show-WDACToast.ps1"
 Get-FileHash $installed -Algorithm SHA256
 ```
 
-Then run the current, signed deployment source from an elevated Windows
-PowerShell 5.1 session. This upgrades the installed copy and task; invoking the
-stale installed copy cannot update code that it does not contain:
+Then run the current, signed deployment source outside Program Files from an
+elevated Windows PowerShell 5.1 session, retaining the installation's existing
+identity settings. Use `-Upgrade` so replacement is transactional: unlike
+`-ResetInstallation`, it preserves the existing installation while it verifies
+the replacement and can roll back a failure. Invoking the stale installed copy
+cannot update code that it does not contain:
 
 ```powershell
 & 'C:\Path\To\Current\Show-WDACToast.ps1' `
+    -Upgrade `
     -AppId 'Contoso.WDACToast' `
     -DisplayName 'Contoso Security' `
     -SupportUri 'https://support.contoso.example/wdac-review' `
