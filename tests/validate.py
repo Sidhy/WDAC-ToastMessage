@@ -270,6 +270,18 @@ assert "`<Hidden>false</Hidden>`" in readme
 assert "`Logs\\WDACToast-yyyy-MM.log`" in readme
 assert "more than two months old" in readme
 
+windows_test_procedure = readme.split("## Windows test procedure", 1)[1].split(
+    "### Troubleshoot missing WinRT types", 1
+)[0]
+stale_copy_remediation = windows_test_procedure.split(
+    "Then run the current, signed deployment source", 1
+)[1]
+stale_copy_command = re.search(r"```powershell\n(.*?)\n```", stale_copy_remediation, re.DOTALL)
+assert stale_copy_command, "the stale Program Files remediation command is missing"
+assert re.search(r"(?m)^\s+-Upgrade\s+`$", stale_copy_command.group(1)), (
+    "the stale Program Files remediation must use the transactional -Upgrade workflow"
+)
+
 intune_package_instructions = readme.split("### 1. Prepare the package", 1)[1].split(
     "### 2. Configure the Win32 app", 1
 )[0]
