@@ -4,7 +4,9 @@
 
 ## How it works
 
-The script has two entry paths:
+The deployment remains **PowerShell-only**. It uses an unpackaged per-user URI protocol (`company-wdactoast:`) for Copy Alert activation; the protocol command starts the same installed, signed `Show-WDACToast.ps1` in STA mode. No helper application, COM local server, or packaged Windows App SDK application is installed.
+
+The script has three entry paths:
 
 1. When run without an event record ID, it installs itself under `C:\Program Files\Company\WDACToast` and creates one event-triggered Scheduled Task assigned to the well-known INTERACTIVE SID (`S-1-5-4`).
 2. When an event fires while an interactive user is signed in, Task Scheduler runs
@@ -12,12 +14,17 @@ The script has two entry paths:
    renderer creates that user's toast application identity, retrieves the exact
    Event ID 3077 record, writes user-profile diagnostics, applies duplicate
    suppression, and submits a toast to Windows.
+3. When **Copy Alert** is selected, Windows opens the registered `company-wdactoast:` URI with the same signed script. The `-ActivationUri` entry point validates the complete URI and token, reads the token-named state file, updates the current user’s clipboard, replaces the pending toast, and exits without application UI.
 
-The application identity is created on demand in the renderer's `HKCU`, so a user who signs in after deployment needs no separate installation. A missing installation must be repaired by rerunning the deployment script elevated; a standard-user renderer never attempts an administrative repair.
+The application identity and copy-alert protocol are created on demand in the
+renderer's `HKCU`, so a user who signs in after deployment needs no separate
+installation. A missing machine installation must be repaired by rerunning the
+deployment script elevated; a standard-user renderer never attempts an
+administrative repair.
 
 ## Requirements
 
-- Windows 10 or Windows 11.
+- 64-bit Windows 10 version 1607 or later, or 64-bit Windows 11 (desktop editions with the Windows notification platform). Windows Server Core is not supported.
 - Windows PowerShell 5.1.
 - A signed-in interactive user session with the Windows Push Notifications user service available. Do not invoke the renderer with PowerShell 7 (`pwsh.exe`) or as SYSTEM: PowerShell 7 does not provide the Windows PowerShell 5.1 WinRT type projection used by `Windows.UI.Notifications`.
 - Notifications enabled for the user in Windows Settings (and not disabled by organizational policy). The script reports an explicit error when `HKCU\Software\Microsoft\Windows\CurrentVersion\PushNotifications\ToastEnabled` is present and set to `0`; it does not override that preference or policy.
@@ -130,7 +137,7 @@ The script enables strict mode and stops on errors. A successful installation or
 suppressed duplicate exits `0`; an uncaught installation or rendering error is
 logged and exits `1`.
 
-Mutable notification state, operational logs, and per-event JSON diagnostics are
+Mutable notification state, token-named activation records, operational logs, and per-event JSON diagnostics are
 stored in `%LOCALAPPDATA%\Company\WDACToast` for the account running that
 invocation. Event invocations therefore write to the user who receives the
 toast; an elevated or Intune installation writes its installation log beneath
@@ -338,7 +345,7 @@ $installed = "$env:ProgramFiles\Company\WDACToast\Show-WDACToast.ps1"
 The result must be `True`. If it is `False`, the file at that exact path was not
 replaced; do not retry the event command against it.
 
-The production file must be signed before installation because the Scheduled Task invokes the installed copy with `AllSigned`. The signing certificate chain
+The production `Show-WDACToast.ps1` must be signed before installation because the Scheduled Task invokes the installed copy with `AllSigned`. The signing certificate chain
 must also be trusted on target devices and the signer must be allowed by the
 deployed App Control policy. Sign the final file before packaging; modifying it
 after signing invalidates the signature:
@@ -347,6 +354,7 @@ after signing invalidates the signature:
 $certificate = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1
 Set-AuthenticodeSignature -FilePath .\Show-WDACToast.ps1 -Certificate $certificate
 ```
+
 
 ## Event processing
 
@@ -370,9 +378,8 @@ review format remains consistent across Code Integrity provider versions.
 All of this static text, including **Unknown file**, **Not provided**, detail
 labels, and built-in action labels, comes from the selected language entry.
 
-The action row provides **Dismiss** and the configurable **Request Review**
-action. **Dismiss** closes the notification, and **Request Review** opens the
-configured HTTPS `SupportUri`. The event's user-private JSON diagnostic remains
+The action row provides localized **Copy Alert** and configurable **Request Review** actions. Both are protocol actions with `afterActivationBehavior="pendingUpdate"`, keeping the toast available for further review. Windows’ small standard close button is the only dismiss control. **Request Review** opens the
+configured HTTPS `SupportUri`. After Copy Alert succeeds, the same `AppId`, deterministic `Tag` (`wdac-<record-id>`), and `Group` (`wdac-blocks`) are used to replace the toast immediately with localized copied-confirmation text and the Review action. Clipboard failure instead submits a localized failure replacement, preventing a toast from remaining pending. The event's user-private JSON diagnostic remains
 available in the state directory for support workflows, but it is not linked
 from the toast because Windows does not reliably activate a local `file:` URI
 from a protocol action on this unpackaged notification.
@@ -456,6 +463,7 @@ toast submission; this does not remove diagnostic JSON or the text log.
 - Dynamic event values and configured action values are XML escaped before toast XML is created.
 - The toast action accepts only a configured HTTPS URI.
 - Event content is never used to construct a command or executable action.
+- Copy activation accepts only the exact `company-wdactoast://copy?alert=<token>` URI shape with a 64-character lowercase hexadecimal token. The token maps only to a file under the current user’s `%LOCALAPPDATA%`; the saved AppId, Tag, and Group are validated before use.
 - The state file is replaced atomically, and Scheduled Task instances are queued to prevent concurrent state updates.
 - No execution-policy bypass is used.
 - Raw status codes remain in diagnostics; unvalidated status-to-text mappings are not presented to users.
@@ -480,10 +488,10 @@ management](https://learn.microsoft.com/intune/intune-service/apps/apps-win32-ap
 1. Customize `WDACToast.json`; do not leave the example support URL.
 2. Finalize every package file—including `Show-WDACToast.ps1`,
    `WDACToast.json`, `WDACToast.Localization.xml`, and any intentionally
-   supplied branding asset—before signing. Code-sign `Show-WDACToast.ps1` with
+   supplied branding asset—before signing. Authenticode-sign `Show-WDACToast.ps1` with
    the production certificate only after all files and settings are final; do
    not edit the script after signing.
-3. Put `Show-WDACToast.ps1`, `WDACToast.json`, and
+3. Put `Show-WDACToast.ps1`, `WDACToast.json`,
    `WDACToast.Localization.xml` in the source folder, along with any branding
    asset intentionally supplied by your organization. Do not add unrelated
    files.
@@ -536,12 +544,14 @@ privilege; use the separately packaged and signed
 That remediation enumerates the machine profile list but never loads or changes
 user registry hives.
 
-Machine uninstall also leaves each user's
-`HKCU\Software\Classes\AppUserModelId\<AppId>` identity in place. With the
-Scheduled Task and renderer removed, this registration is inert: it executes
-nothing, collects nothing, and does not display a toast. The device-wide data
-remediation deliberately leaves it untouched rather than loading offline user
-hives; a future installed renderer can safely refresh it on demand.
+Machine uninstall removes the AppUserModelID and `company-wdactoast` protocol
+from the account running uninstall. It cannot edit other users' unloaded HKCU
+hives, so those profiles retain both registrations. With the Scheduled Task and
+installed script removed, their protocol command points to a missing file and is
+inert: it executes nothing, collects nothing, and does not display a toast. The
+device-wide data remediation deliberately leaves these keys untouched rather
+than loading offline user hives; a future installed renderer safely refreshes
+them on demand.
 
 ### 3. Detection rule
 
