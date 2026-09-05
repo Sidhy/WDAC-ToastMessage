@@ -175,6 +175,13 @@ def function_body(name: str) -> str:
     return collector[start : next_function if next_function != -1 else len(collector)]
 
 assert "ToUpperInvariant()" not in function_body("Show-ToastNotification")
+protocol_identity_body = function_body("Ensure-CurrentUserAppIdentity")
+protocol_command = next(
+    line for line in protocol_identity_body.splitlines() if "$ProtocolCommand =" in line
+)
+assert protocol_command.count("-ExecutionPolicy $ExecutionPolicy") == 2
+assert "-ExecutionPolicy AllSigned" not in protocol_command
+assert "-Sta" in protocol_command
 toast_body = function_body("Show-ToastNotification")
 assert toast_body.count('activationType="protocol" afterActivationBehavior="pendingUpdate"') == 2
 assert 'activationType="background"' not in toast_body
