@@ -1119,8 +1119,9 @@ function Show-ToastNotification {
     }
 
     $LocalizedActionLabel = if ($ActionLabel -eq 'Request Review') { $Strings.RequestReview } else { $ActionLabel }
+    $EscapedReviewPageUri = & $Escape $ReviewPageUri
     $ActionXml = '<actions><action content="{0}" arguments="dismiss" activationType="system"/><action content="{1}" arguments="{2}" activationType="protocol" afterActivationBehavior="pendingUpdate"/></actions>' -f
-        (& $Escape $Strings.Dismiss), (& $Escape $LocalizedActionLabel), (& $Escape $ReviewPageUri)
+        (& $Escape $Strings.Dismiss), (& $Escape $LocalizedActionLabel), $EscapedReviewPageUri
 
     $ImageXml = ''
     if (-not [string]::IsNullOrWhiteSpace($LogoPath)) {
@@ -1147,8 +1148,8 @@ function Show-ToastNotification {
 
     # The BCP-47 lang attribute is part of the Microsoft ToastGeneric schema and
     # lets Windows apply the appropriate font and text shaping to this payload.
-    $ToastXml = '<toast><visual><binding template="ToastGeneric" lang="{0}">{1}<text hint-maxLines="1">{2}</text><text hint-maxLines="2">{3}</text><group><subgroup>{4}</subgroup></group></binding></visual>{5}</toast>' -f
-        (& $Escape $Language), $ImageXml, (& $Escape $Title), (& $Escape $Message), ($DetailNodes -join ''), $ActionXml
+    $ToastXml = '<toast launch="{0}" activationType="protocol" afterActivationBehavior="pendingUpdate"><visual><binding template="ToastGeneric" lang="{1}">{2}<text hint-maxLines="1">{3}</text><text hint-maxLines="2">{4}</text><group><subgroup>{5}</subgroup></group></binding></visual>{6}</toast>' -f
+        $EscapedReviewPageUri, (& $Escape $Language), $ImageXml, (& $Escape $Title), (& $Escape $Message), ($DetailNodes -join ''), $ActionXml
 
     $Document = [Windows.Data.Xml.Dom.XmlDocument]::new()
     $Document.LoadXml($ToastXml)
