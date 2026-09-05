@@ -111,9 +111,22 @@ required_collector_fragments = [
     '<group><subgroup>{4}</subgroup></group>',
     'hint-style="body" hint-wrap="true" hint-maxLines="4"',
     'template="ToastGeneric" lang="{0}"',
-    '(& $Escape $Strings.Dismiss)',
     '(& $Escape $LocalizedActionLabel)',
     "Write-Error -ErrorRecord $Failure",
+    'activationType="protocol" afterActivationBehavior="pendingUpdate"',
+    "$Toast.Tag = $Tag",
+    "$Toast.Group = $Group",
+    "$ToastTag = \"wdac-$($Event.RecordId)\"",
+    "$ToastGroup = 'wdac-blocks'",
+    "function Invoke-WdacToastActivation",
+    "[string]$ActivationUri",
+    "company-wdactoast://copy\\?alert=([a-f0-9]{64})",
+    "[Windows.Clipboard]::SetText($ClipboardText)",
+    "function Show-WdacReplacementNotification",
+    "CopyFailedTitle",
+    "'URL Protocol'",
+    "shell\\open\\command",
+    "Remove-CurrentUserAppIdentity",
 ]
 for fragment in required_collector_fragments:
     assert fragment in collector, f"collector is missing {fragment!r}"
@@ -162,6 +175,20 @@ def function_body(name: str) -> str:
     return collector[start : next_function if next_function != -1 else len(collector)]
 
 assert "ToUpperInvariant()" not in function_body("Show-ToastNotification")
+toast_body = function_body("Show-ToastNotification")
+assert toast_body.count('activationType="protocol" afterActivationBehavior="pendingUpdate"') == 2
+assert 'activationType="background"' not in toast_body
+assert 'activationType="system"' not in toast_body
+assert '$Strings.Dismiss' not in toast_body
+assert 'arguments="{3}" activationType="protocol" afterActivationBehavior="pendingUpdate"' in toast_body
+replacement_body = function_body("Show-WdacReplacementNotification")
+assert "CreateToastNotifier([string]$Alert.AppId).Show($Toast)" in replacement_body
+assert "$Toast.Tag = [string]$Alert.Tag" in replacement_body
+assert "$Toast.Group = [string]$Alert.Group" in replacement_body
+activation_body = function_body("Invoke-WdacToastActivation")
+assert "Add-Type -AssemblyName PresentationCore" in activation_body
+assert "Show-WdacReplacementNotification" in activation_body
+assert "Only a copy activation URI with a valid alert token is supported" in activation_body
 assert "-FileName $FileName" not in function_body("Invoke-WdacToast")
 assert "$ProcessPath -replace '^.*[\\\\/]', ''" in function_body("Invoke-WdacToast")
 assert "('{0} {1}' -f $Localization.Strings.BlockedAppPath, $FileName) = $FilePath" in function_body("Invoke-WdacToast")
@@ -255,7 +282,8 @@ assert "Registry::HKEY_USERS" not in profile_cleanup
 assert "Remove-Item -LiteralPath $ProfileDirectory" not in profile_cleanup
 assert "Cleanup-WDACToastAllProfiles.ps1" in readme
 assert "SYSTEM profile, **not** every" in readme
-assert "registration is inert" in readme
+assert "protocol command points to a missing file" in readme
+assert "other users' unloaded HKCU" in readme
 
 match = re.search(r'\$TaskXml = @"\n(.*?)\n"@', collector, re.DOTALL)
 assert match, "scheduled-task XML template was not found"
@@ -312,7 +340,7 @@ expected_languages = {"en", "it-IT", "nl-NL", "de-DE", "fr-FR", "uk-UA", "da-DK"
 languages = {node.attrib["tag"]: node for node in localization_root.findall("language")}
 assert set(languages) == expected_languages
 required_strings = {node.attrib["name"] for node in languages["en"].findall("string")}
-assert required_strings == {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "Dismiss", "RequestReview"}
+assert required_strings == {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "RequestReview", "CopyAlert", "CopiedTitle", "CopiedMessage", "CopyFailedTitle", "CopyFailedMessage"}
 english_strings = {node.attrib["name"]: node.text for node in languages["en"].findall("string")}
 assert english_strings["BlockedAppPath"] == "Blocked App:"
 assert english_strings["CalledByAppPath"] == "Executed by:"
@@ -323,5 +351,8 @@ for tag, language in languages.items():
     assert all((node.text or "").strip() for node in strings), f"{tag} has an empty localized string"
     detail_labels = [next(node.text for node in strings if node.attrib["name"] == name) for name in ("BlockedAppPath", "CalledByAppPath", "BlockedByPolicy")]
     assert all(label.endswith(":") and len(label) <= 24 for label in detail_labels), f"{tag} has an overly long detail label"
+
+assert not (ROOT / "ToastActivator").exists()
+assert "WDACToast.Activator.exe" not in collector
 
 print("Static WDAC collector and task XML checks passed.")
