@@ -63,7 +63,7 @@ param(
     [switch]$CleanupLogs,
 
     # Internal entry point used by the monthly log-maintenance Scheduled Task.
-    [switch]$LogMaintenance
+    [switch]$LogMaintenance,
 
     # Internal entry point invoked by the current user's registered copy-alert
     # URI protocol. The strict shape prevents arbitrary command-line input.
