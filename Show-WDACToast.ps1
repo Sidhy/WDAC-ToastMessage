@@ -993,7 +993,7 @@ function Show-ToastNotification {
 
     $Escape = { param([AllowNull()][string]$Value) [System.Security.SecurityElement]::Escape($(if ([string]::IsNullOrWhiteSpace($Value)) { $Strings.NotProvided } else { $Value })) }
     $DetailNodes = foreach ($Entry in $Details.GetEnumerator()) {
-        '<text hint-style="captionSubtle" hint-wrap="true" hint-maxLines="1">{0}</text><text hint-style="body" hint-wrap="true" hint-maxLines="3">{1}</text>' -f
+        '<text hint-style="captionSubtle" hint-wrap="true" hint-maxLines="1">{0}</text><text hint-style="body" hint-wrap="true" hint-maxLines="4">{1}</text>' -f
             (& $Escape ([string]$Entry.Key)), (& $Escape ([string]$Entry.Value))
     }
 
@@ -1122,6 +1122,12 @@ function Invoke-WdacToast {
     else {
         $FilePath -replace '^.*[\\/]', ''
     }
+    $ProcessFileName = if ([string]::IsNullOrWhiteSpace($ProcessPath)) {
+        $Localization.Strings.UnknownFile
+    }
+    else {
+        $ProcessPath -replace '^.*[\\/]', ''
+    }
 
     $Result = [ordered]@{
         EventId = $Event.Id
@@ -1182,8 +1188,8 @@ function Invoke-WdacToast {
         $Localization.Strings.VersionFormat -f $PolicyName, $PolicyVersion
     }
     $ToastDetails = [ordered]@{
-        ($Localization.Strings.BlockedAppPath) = $FilePath
-        ($Localization.Strings.CalledByAppPath) = $ProcessPath
+        ('{0} {1}' -f $Localization.Strings.BlockedAppPath, $FileName) = $FilePath
+        ('{0} {1}' -f $Localization.Strings.CalledByAppPath, $ProcessFileName) = $ProcessPath
         ($Localization.Strings.BlockedByPolicy) = $PolicyDisplay
     }
     Write-WdacToastLog -Message "Submitting toast to the Windows notification platform with AppId '$AppId'."
