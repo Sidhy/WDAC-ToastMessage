@@ -33,6 +33,14 @@ required_collector_fragments = [
     "$Node.GetAttribute('Name')",
     "$Node.InnerText",
     "function Write-WdacToastLog",
+    "function Invoke-WdacToastLogMaintenance",
+    "WDACToast-{0}.log",
+    ".AddMonths(-2)",
+    "[switch]$LogMaintenance",
+    "$TaskName Log Maintenance",
+    "<CalendarTrigger>",
+    "<StartWhenAvailable>true</StartWhenAvailable>",
+    "-LogMaintenance",
     "function Test-WdacToastConfiguration",
     "function Get-OptionalRegistryValue",
     "$Item.PSObject.Properties[$Name]",
@@ -180,7 +188,7 @@ install_body = function_body("Install-WdacToast")
 configuration_check_body = function_body("Test-WdacToastConfiguration")
 assert '$TaskArguments -like "*-WindowStyle $WindowStyle*"' in configuration_check_body
 install_register = install_body.index("Register-ScheduledTask -TaskName $TaskName")
-install_old_task_removal = install_body.index("Unregister-ScheduledTask -TaskName $PreviousInstallation.TaskName")
+install_old_task_removal = install_body.index("Unregister-ScheduledTask -TaskName $PreviousTask")
 install_old_directory_removal = install_body.index("Remove-Item -LiteralPath $PreviousInstallation.InstallDirectory")
 install_marker_write = install_body.index("Set-WdacToastInstallationMarker")
 assert install_register < install_old_task_removal < install_old_directory_removal < install_marker_write
@@ -203,6 +211,8 @@ assert "repository default" in readme and "currently configured" in readme
 assert "Administrator rights for every install, upgrade, reset, and uninstall" in readme
 assert "`-WindowStyle Hidden`" in readme
 assert "`<Hidden>false</Hidden>`" in readme
+assert "`Logs\\WDACToast-yyyy-MM.log`" in readme
+assert "more than two months old" in readme
 
 intune_package_instructions = readme.split("### 1. Prepare the package", 1)[1].split(
     "### 2. Configure the Win32 app", 1
@@ -272,6 +282,19 @@ assert "-NoProfile -NonInteractive -WindowStyle Minimized -ExecutionPolicy Bypas
 )
 assert "-ExecutionPolicy Bypass" in task.findtext(".//t:Arguments", namespaces=ns)
 assert task.findtext(".//t:Arguments", namespaces=ns).endswith("-WindowStyle Minimized")
+
+maintenance_match = re.search(r'\$MaintenanceTaskXml = @"\n(.*?)\n"@', collector, re.DOTALL)
+assert maintenance_match, "monthly log-maintenance task XML template was not found"
+maintenance_xml = maintenance_match.group(1)
+maintenance_xml = maintenance_xml.replace("$EscapedScript", r"C:\Program Files\Company\WDACToast\Show-WDACToast.ps1")
+maintenance_xml = maintenance_xml.replace("$ExecutionPolicy", "Bypass")
+maintenance_xml = maintenance_xml.replace("$WindowStyle", "Minimized")
+maintenance_task = ET.fromstring(maintenance_xml)
+assert maintenance_task.findtext(".//t:GroupId", namespaces=ns) == "S-1-5-4"
+assert maintenance_task.findtext(".//t:StartWhenAvailable", namespaces=ns) == "true"
+assert maintenance_task.findtext(".//t:ScheduleByMonth/t:DaysOfMonth/t:Day", namespaces=ns) == "1"
+assert len(maintenance_task.findall(".//t:ScheduleByMonth/t:Months/*", namespaces=ns)) == 12
+assert "-LogMaintenance" in maintenance_task.findtext(".//t:Arguments", namespaces=ns)
 
 parsed_configuration = json.loads(configuration)
 assert parsed_configuration["ActionLabel"] == "Request Review"

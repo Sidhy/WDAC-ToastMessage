@@ -135,6 +135,13 @@ stored in `%LOCALAPPDATA%\Company\WDACToast` for the account running that
 invocation. Event invocations therefore write to the user who receives the
 toast; an elevated or Intune installation writes its installation log beneath
 the administrator or SYSTEM profile instead.
+Operational output is rotated into `Logs\WDACToast-yyyy-MM.log` at each UTC
+month boundary. Installation also registers a separate, hidden-console monthly
+Scheduled Task named `<TaskName> Log Maintenance`. On the first day of each
+month (or when Task Scheduler can next start a missed run), it runs in the
+interactive user's context and removes log and event-diagnostic files whose
+last write time is more than two months old. Thus maintenance remains isolated
+to the same user profile as the notification data and runs in the background.
 The script does not grant Authenticated Users access to a shared machine
 directory. Branding and signed program files remain under Program Files. The
 same configuration values can be supplied as command-line parameters during
