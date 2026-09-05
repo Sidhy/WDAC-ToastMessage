@@ -4,7 +4,10 @@
 
 ## How it works
 
-The deployment remains **PowerShell-only**. No helper application, custom URI protocol, COM local server, or packaged Windows App SDK application is installed.
+The deployment remains **PowerShell-only**. It installs no helper executable,
+COM local server, or packaged Windows App SDK application. It does register the
+narrowly scoped per-user `company-wdac-review` protocol described below because
+Windows toast protocol activation cannot reliably launch a local `file://` URI.
 
 The script has two entry paths:
 
@@ -93,8 +96,9 @@ Edit the supplied JSON before deployment:
 
 Available settings are:
 
-- `SupportUri` — an organization-controlled HTTPS review URL.
-- `ActionLabel` — text for the action that opens `SupportUri`; the default is
+- `SupportUri` — an organization-controlled, HTTPS-only ticket portal URL. It is
+  embedded as the destination inside each local review report, not given event data.
+- `ActionLabel` — text for the action that opens the local review report; the default is
   **Request Review**.
 - `AppId` — a stable application identity, such as `Contoso.WDACToast`.
 - `DisplayName` — the notification sender shown to users.
@@ -134,7 +138,7 @@ The script enables strict mode and stops on errors. A successful installation or
 suppressed duplicate exits `0`; an uncaught installation or rendering error is
 logged and exits `1`.
 
-Mutable notification state, token-named activation records, operational logs, and per-event JSON diagnostics are
+Mutable notification state, local review reports, operational logs, and per-event JSON diagnostics are
 stored in `%LOCALAPPDATA%\Company\WDACToast` for the account running that
 invocation. Event invocations therefore write to the user who receives the
 toast; an elevated or Intune installation writes its installation log beneath
@@ -143,7 +147,7 @@ Operational output is rotated into `Logs\WDACToast-yyyy-MM.log` at each UTC
 month boundary. Installation also registers a separate, hidden-console monthly
 Scheduled Task named `<TaskName> Log Maintenance`. On the first day of each
 month (or when Task Scheduler can next start a missed run), it runs in the
-interactive user's context and removes log and event-diagnostic files whose
+interactive user's context and removes logs, event diagnostics, and review reports whose
 last write time is more than two months old. Thus maintenance remains isolated
 to the same user profile as the notification data and runs in the background.
 The script does not grant Authenticated Users access to a shared machine
@@ -375,7 +379,7 @@ review format remains consistent across Code Integrity provider versions.
 All of this static text, including **Unknown file**, **Not provided**, detail
 labels, and built-in action labels, comes from the selected language entry.
 
-The action row provides a localized **Dismiss** action and a configurable/localized **Request Review** action. **Dismiss** uses Windows system activation to close the notification. **Request Review** opens the configured HTTPS `SupportUri` and uses `afterActivationBehavior="pendingUpdate"` so the notification remains available while the review page opens. The event's user-private JSON diagnostic remains available in the state directory for support workflows, but it is not linked from the toast.
+The action row provides a localized **Dismiss** action and a configurable/localized **Request Review** action. **Dismiss** uses Windows system activation to close the notification. **Request Review** opens that event's local report and uses `afterActivationBehavior="pendingUpdate"` so the notification remains available while the report opens.
 When those files are still available, Windows version metadata supplies the
 description, product, publisher, and version for both the blocked file and its
 caller. That metadata, the raw WDAC status, signing levels, hashes, activity ID,
@@ -392,7 +396,38 @@ The JSON diagnostics select additional event values for support workflows:
 requested and validated signing levels, signing scenario, SHA-256/SHA-1 hashes,
 and caller metadata. `RawEventData` still contains every named value emitted by
 the installed Code Integrity provider, even when a provider version uses a field
-the script does not recognize. The **Request review** action opens `SupportUri`.
+the script does not recognize.
+
+### Local review page and support portal
+
+Before submitting the toast, the renderer creates a collision-safe file named
+`Reviews\review-<record-id>-<random-guid>.html` beneath
+`%LOCALAPPDATA%\Company\WDACToast`. The responsive, self-contained page shows
+the application, caller, policy, signing, hash, event, and provider fields; a
+plain-text **Exact error details** block that remains selectable when scripting
+is disabled; an explanation of the WDAC decision; and encoded raw event XML in
+a collapsed advanced section. It contains no JavaScript and makes no network
+request until the user chooses the organization-controlled HTTPS support link.
+All event, localization, and configuration values are HTML encoded.
+
+Windows toast protocol activation is not a reliable/supported way to launch a
+`file://` action directly across the supported Windows 10 and 11 versions.
+Accordingly, the renderer registers `company-wdac-review` under the current
+user's `HKCU\Software\Classes`. Its command invokes only the installed signed
+script. The handler accepts a numeric record ID, locates exactly one matching
+file inside the fixed per-user `Reviews` directory, and asks Windows to open it
+with the default browser; it never executes an event-supplied path. This adds a
+per-user protocol registration that security teams must permit and removes on
+reset/uninstall. Deployments that prohibit custom protocols need a separately
+designed HTTPS report service; do not put sensitive event fields in its URL.
+
+The local page and support portal are distinct. The report can contain sensitive
+paths, hashes, device identifiers, and publisher metadata, remains on the device,
+and is not uploaded automatically. Users should copy **Exact error details**
+before selecting **Open support portal**, then paste it into the ticket. Review
+files inherit the user's profile ACL and are deleted by monthly maintenance when
+older than two months. Reset, `-Uninstall -CleanupLogs`, and the all-profile
+cleanup script remove them with the rest of the WDACToast state directory.
 
 Code Integrity commonly records paths in NT form, for example
 `\Device\HarddiskVolume3\Program Files\Example\app.exe`. The script uses the
@@ -413,8 +448,8 @@ Each event is written before the notification decision to:
 The JSON includes selected fields, all named `EventData` values, and the complete
 event XML. The directory is created beneath the selected user's profile and uses
 the profile's inherited ACL. The script does not set a custom ACL. JSON and text
-logs have no automatic retention or size limit; manage them separately if your
-support or privacy policy requires retention limits.
+files more than two months old are removed by monthly maintenance. Size is not
+otherwise capped, so align collection and retention with your privacy policy.
 
 Operational activity and caught errors are appended to:
 
@@ -453,8 +488,8 @@ toast submission; this does not remove diagnostic JSON or the text log.
 
 ## Security properties
 
-- Dynamic event values and configured action values are XML escaped before toast XML is created.
-- The toast action accepts only a configured HTTPS URI.
+- Dynamic values are XML escaped in toast markup and HTML encoded in reports.
+- The toast action targets only the constrained per-user handler; the report's support destination is HTTPS-only.
 - Event content is never used to construct a command or executable action.
 - The state file is replaced atomically, and Scheduled Task instances are queued to prevent concurrent state updates.
 - No execution-policy bypass is used.
