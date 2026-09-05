@@ -161,8 +161,7 @@ function Ensure-CurrentUserAppIdentity {
     New-ItemProperty -Path $ProtocolPath -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
     $ProtocolCommandPath = Join-Path $ProtocolPath 'shell\open\command'
     New-Item -Path $ProtocolCommandPath -Force | Out-Null
-    $ProtocolCommand = '"{0}" -NoProfile -NonInteractive -Sta -WindowStyle Hidden -ExecutionPolicy AllSigned -File "{1}" -ActivationUri "%1"' -f `
-        "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe", $InstalledScript
+    $ProtocolCommand = "`"$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -NonInteractive -Sta -WindowStyle Hidden -ExecutionPolicy $ExecutionPolicy -File `"$InstalledScript`" -ActivationUri `"%1`" -ExecutionPolicy $ExecutionPolicy"
     Set-Item -LiteralPath $ProtocolCommandPath -Value $ProtocolCommand -Force
     Write-WdacToastLog -Message "Ensured AppUserModelID '$AppId' for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
 }

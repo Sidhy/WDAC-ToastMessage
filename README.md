@@ -652,6 +652,17 @@ stale installed copy cannot update code that it does not contain:
 (Get-Command $installed).Parameters.ContainsKey('EventRecordId')
 ```
 
+### Troubleshoot Copy Alert
+
+The `company-wdactoast` URI registration is stored per user. The renderer
+refreshes it when that user next receives a notification. After deploying the
+corrected script, generate a new WDAC toast for each affected user, or explicitly
+refresh that user's
+`HKCU\Software\Classes\company-wdactoast\shell\open\command` registration with
+the corrected command. This ensures that Copy Alert launches and passes through
+the configured execution policy while retaining the STA host required by
+`Windows.Clipboard`.
+
 Validate toast branding, support-link activation, Focus Assist behavior, duplicate suppression, Fast User Switching, and task history on every supported Windows build.
 
 ### Troubleshoot missing WinRT types
