@@ -109,7 +109,7 @@ required_collector_fragments = [
     '<text hint-maxLines="1">{2}</text>',
     '<text hint-maxLines="2">{3}</text>',
     '<group><subgroup>{4}</subgroup></group>',
-    'hint-style="body" hint-wrap="true" hint-maxLines="3"',
+    'hint-style="body" hint-wrap="true" hint-maxLines="4"',
     'template="ToastGeneric" lang="{0}"',
     '(& $Escape $Strings.Dismiss)',
     '(& $Escape $LocalizedActionLabel)',
@@ -163,6 +163,9 @@ def function_body(name: str) -> str:
 
 assert "ToUpperInvariant()" not in function_body("Show-ToastNotification")
 assert "-FileName $FileName" not in function_body("Invoke-WdacToast")
+assert "$ProcessPath -replace '^.*[\\\\/]', ''" in function_body("Invoke-WdacToast")
+assert "('{0} {1}' -f $Localization.Strings.BlockedAppPath, $FileName) = $FilePath" in function_body("Invoke-WdacToast")
+assert "('{0} {1}' -f $Localization.Strings.CalledByAppPath, $ProcessFileName) = $ProcessPath" in function_body("Invoke-WdacToast")
 assert "Remove-Item -LiteralPath $InstallationMarkerPath" in function_body("Uninstall-WdacToast")
 
 upgrade_body = function_body("Upgrade-WdacToastInstallation")
