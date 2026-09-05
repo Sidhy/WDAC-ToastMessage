@@ -1,4 +1,5 @@
 from pathlib import Path
+from html.parser import HTMLParser
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -106,11 +107,11 @@ required_collector_fragments = [
     "$Localization.Strings.BlockedByPolicy",
     "$PolicyVersion = Get-FirstEventValue",
     "PolicyVersion = $PolicyVersion",
-    '<text hint-maxLines="1">{2}</text>',
-    '<text hint-maxLines="2">{3}</text>',
-    '<group><subgroup>{4}</subgroup></group>',
+    '<text hint-maxLines="1">{3}</text>',
+    '<text hint-maxLines="2">{4}</text>',
+    '<group><subgroup>{5}</subgroup></group>',
     'hint-style="body" hint-wrap="true" hint-maxLines="4"',
-    'template="ToastGeneric" lang="{0}"',
+    'template="ToastGeneric" lang="{1}"',
     '(& $Escape $LocalizedActionLabel)',
     "Write-Error -ErrorRecord $Failure",
     'activationType="protocol" afterActivationBehavior="pendingUpdate"',
@@ -123,7 +124,7 @@ required_collector_fragments = [
 for fragment in required_collector_fragments:
     assert fragment in collector, f"collector is missing {fragment!r}"
 
-assert "[string]$ActivationUri" not in collector
+assert "function New-WdacReviewPage" in collector
 assert "company-wdactoast://copy" not in collector
 assert "Windows.Clipboard" not in collector
 assert "$AlertStateDirectory" not in collector
@@ -143,8 +144,8 @@ assert "Registry::HKEY_USERS" not in collector
 assert not re.search(r"\bGet-ItemPropertyValue\s+-", collector)
 assert "View more details" not in collector
 assert "$Strings.MoreDetails" not in collector
-assert "[string]$DetailsUri" not in collector
-assert "-DetailsUri $DetailsUri" not in collector
+assert "[string]$ReviewPageUri" in collector
+assert "-ReviewPageUri $ReviewPage.ActivationUri" in collector
 assert '"File: $(Limit-Text' not in collector
 assert '"Location: $(Limit-Text' not in collector
 assert '"Requested by: $(Limit-Text' not in collector
@@ -176,23 +177,44 @@ def function_body(name: str) -> str:
 assert "ToUpperInvariant()" not in function_body("Show-ToastNotification")
 identity_body = function_body("Ensure-CurrentUserAppIdentity")
 assert "AppUserModelId\\$AppId" in identity_body
-assert "company-wdactoast" not in identity_body, "the app identity function must not register the legacy protocol"
-assert "URL Protocol" not in identity_body
-assert "shell\\open\\command" not in identity_body
-# Legacy cleanup is permitted, but no code may create a company-wdactoast key.
-assert not re.search(r"New-Item(?:Property)?[^\n]*company-wdactoast", collector, re.IGNORECASE)
+assert "$ReviewProtocol" in identity_body
+assert "URL Protocol" in identity_body
+assert "shell\\open\\command" in identity_body
+
 
 toast_body = function_body("Show-ToastNotification")
 assert toast_body.count("<action ") == 2, "toast XML must define exactly two actions"
-assert toast_body.count('activationType="system"') == 1
 assert 'content="{0}" arguments="dismiss" activationType="system"' in toast_body
-assert toast_body.count('activationType="protocol" afterActivationBehavior="pendingUpdate"') == 1
 assert 'content="{1}" arguments="{2}" activationType="protocol" afterActivationBehavior="pendingUpdate"' in toast_body
 assert "(& $Escape $Strings.Dismiss)" in toast_body
 assert "(& $Escape $LocalizedActionLabel)" in toast_body
-assert "(& $Escape $SupportUri)" in toast_body
+assert "$EscapedReviewPageUri = & $Escape $ReviewPageUri" in toast_body
+assert "(& $Escape $SupportUri)" not in toast_body
 assert "[ValidatePattern('^https://')]" in collector
 assert "company-wdactoast" not in toast_body
+
+# Materialize the XML-producing format strings to validate the routing contract
+# represented by the generated toast, rather than checking isolated fragments.
+review_uri = "company-wdac-review://open/314/0123456789abcdef0123456789abcdef"
+action_template = re.search(r"\$ActionXml = '([^\n]+)' -f", toast_body).group(1)
+action_xml = action_template.format("Dismiss", "Request Review", review_uri.replace("&", "&amp;"))
+toast_template = re.search(r"\$ToastXml = '([^\n]+)' -f", toast_body).group(1)
+toast_xml = toast_template.format(
+    review_uri.replace("&", "&amp;"), "en-US", "", "Blocked app", "Review report available", "", action_xml
+)
+toast = ET.fromstring(toast_xml)
+assert toast.get("launch") == review_uri, "the toast body must target the Review Report page"
+assert toast.get("activationType") == "protocol", "toast body activation must use the report protocol"
+assert toast.get("afterActivationBehavior") == "pendingUpdate"
+actions = toast.findall("./actions/action")
+request_review = next(action for action in actions if action.get("content") == "Request Review")
+assert request_review.get("arguments") == review_uri, "Request Review must retain the report protocol URI"
+assert request_review.get("activationType") == "protocol"
+assert request_review.get("afterActivationBehavior") == "pendingUpdate"
+system_actions = [action for action in actions if action.get("activationType") == "system"]
+assert len(system_actions) == 1, "Dismiss must be the sole system-activation action"
+assert system_actions[0].get("content") == "Dismiss" and system_actions[0].get("arguments") == "dismiss"
+
 assert "-FileName $FileName" not in function_body("Invoke-WdacToast")
 assert "$ProcessPath -replace '^.*[\\\\/]', ''" in function_body("Invoke-WdacToast")
 assert "('{0} {1}' -f $Localization.Strings.BlockedAppPath, $FileName) = $FilePath" in function_body("Invoke-WdacToast")
@@ -247,6 +269,18 @@ assert "`-WindowStyle Hidden`" in readme
 assert "`<Hidden>false</Hidden>`" in readme
 assert "`Logs\\WDACToast-yyyy-MM.log`" in readme
 assert "more than two months old" in readme
+
+windows_test_procedure = readme.split("## Windows test procedure", 1)[1].split(
+    "### Troubleshoot missing WinRT types", 1
+)[0]
+stale_copy_remediation = windows_test_procedure.split(
+    "Then run the current, signed deployment source", 1
+)[1]
+stale_copy_command = re.search(r"```powershell\n(.*?)\n```", stale_copy_remediation, re.DOTALL)
+assert stale_copy_command, "the stale Program Files remediation command is missing"
+assert re.search(r"(?m)^\s+-Upgrade\s+`$", stale_copy_command.group(1)), (
+    "the stale Program Files remediation must use the transactional -Upgrade workflow"
+)
 
 intune_package_instructions = readme.split("### 1. Prepare the package", 1)[1].split(
     "### 2. Configure the Win32 app", 1
@@ -339,23 +373,197 @@ assert "ProgramData" not in parsed_configuration["LogoPath"]
 
 localization_root = ET.fromstring(localization)
 assert localization_root.attrib["fallbackLanguage"] == "en"
-expected_languages = {"en", "it-IT", "nl-NL", "de-DE", "fr-FR", "uk-UA", "da-DK", "es-ES", "es-AR", "pt-PT", "pt-BR"}
+expected_languages = {
+    "en", "it-IT", "nl-NL", "de-DE", "fr-FR", "uk-UA", "da-DK", "es-ES", "es-AR", "pt-PT", "pt-BR",
+    "ko-KR", "ja-JP", "hu-HU", "cs-CZ", "ar-MA", "ro-RO",
+}
+requested_languages = {"ko-KR", "ja-JP", "hu-HU", "cs-CZ", "ar-MA", "ro-RO"}
 languages = {node.attrib["tag"]: node for node in localization_root.findall("language")}
 assert set(languages) == expected_languages
+assert requested_languages <= set(languages), "one or more requested locales are missing"
+expected_report_titles = {
+    "en": "What Happened?", "it-IT": "Che cosa è successo?", "nl-NL": "Wat is er gebeurd?",
+    "de-DE": "Was ist passiert?", "fr-FR": "Que s’est-il passé ?", "uk-UA": "Що сталося?",
+    "da-DK": "Hvad skete der?", "es-ES": "¿Qué ha ocurrido?", "es-AR": "¿Qué pasó?",
+    "pt-PT": "O que aconteceu?", "pt-BR": "O que aconteceu?", "ko-KR": "무슨 일이 발생했나요?",
+    "ja-JP": "何が起きたのですか？", "hu-HU": "Mi történt?", "cs-CZ": "Co se stalo?",
+    "ar-MA": "ماذا حدث؟", "ro-RO": "Ce s-a întâmplat?",
+}
+# These reviewed values intentionally pin wording where formality or regional
+# usage is significant; update them only after the corresponding resource has
+# completed the independent localization review documented in docs/.
+reviewed_locale_expectations = {
+    ("it-IT", "Message"): "La sua organizzazione ha bloccato questa applicazione perché non è approvata o potrebbe rappresentare un rischio per la sicurezza. Ciò non significa che sia malware.",
+    ("it-IT", "ReportSupportStepTwo"): "Faccia clic su Apri portale di supporto, crei un ticket e incolli nel ticket i dettagli copiati.",
+    ("it-IT", "ReportSupportStepThree"): "Spieghi perché ha bisogno di questa applicazione.",
+    ("es-ES", "ReportSupportStepOne"): "Copie el error detallado con el botón Copiar, o seleccione y copie manualmente el error detallado.",
+    ("es-AR", "ReportCopyFailure"): "No se pudo copiar. Los detalles del error están seleccionados; cópialos manualmente.",
+    ("es-AR", "ReportSupportStepOne"): "Copiá el error detallado con el botón Copiar, o seleccioná y copiá manualmente el error detallado.",
+    ("pt-PT", "UnknownFile"): "Ficheiro desconhecido",
+    ("pt-PT", "Dismiss"): "Fechar",
+    ("pt-PT", "ReportRecordId"): "ID do registo",
+    ("pt-BR", "UnknownFile"): "Arquivo desconhecido",
+    ("pt-BR", "Dismiss"): "Fechar",
+    ("pt-BR", "ReportRecordId"): "ID do registro",
+}
 required_strings = {node.attrib["name"] for node in languages["en"].findall("string")}
-assert required_strings == {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "RequestReview", "Dismiss"}
+assert {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "RequestReview", "Dismiss"} <= required_strings
 english_strings = {node.attrib["name"]: node.text for node in languages["en"].findall("string")}
+approved_english_explanation = (
+    "Your organization blocked this application ({0}) because it is not approved for use or may present a security risk. "
+    "Some legitimate applications and Windows tools can also be blocked because they are commonly misused by attackers. "
+    "This does not mean the application is malware."
+)
+approved_english_toast = (
+    "Your organization blocked this application because it is not approved or may pose a security risk. "
+    "This does not mean it is malware."
+)
+assert english_strings["Message"] == approved_english_toast
+assert english_strings["ReportTitle"] == "What Happened?"
+assert english_strings["ReportExplanation"] == approved_english_explanation
 assert english_strings["BlockedAppPath"] == "Blocked App:"
 assert english_strings["CalledByAppPath"] == "Executed by:"
 assert english_strings["BlockedByPolicy"] == "WDAC Policy:"
 for tag, language in languages.items():
     strings = language.findall("string")
+    values = {node.attrib["name"]: (node.text or "").strip() for node in strings}
     assert {node.attrib["name"] for node in strings} == required_strings, f"{tag} has incomplete localization"
     assert all((node.text or "").strip() for node in strings), f"{tag} has an empty localized string"
-    detail_labels = [next(node.text for node in strings if node.attrib["name"] == name) for name in ("BlockedAppPath", "CalledByAppPath", "BlockedByPolicy")]
+    assert values["Message"], f"{tag} has an empty toast message"
+    assert values["ReportExplanation"], f"{tag} has an empty report explanation"
+    assert values["ReportTitle"] == expected_report_titles[tag], f"{tag} has an unexpected report title"
+    assert values["ReportExplanation"].count("{0}") == 1, f"{tag} report explanation must include the filename placeholder"
+    assert len(values["Message"]) <= 200, f"{tag} has an overly long toast message"
+    assert len(values["Message"].split()) <= 30, f"{tag} toast message has too many words"
+    assert values["Message"] != values["ReportExplanation"], f"{tag} toast message is not concise"
+    if tag != "en":
+        assert values["Message"] != approved_english_toast, f"{tag} does not have a locale-specific toast message"
+    assert len(values["Title"]) <= 60 and len(values["Title"].split()) <= 8, f"{tag} has an overly long toast title"
+    detail_labels = [values[name] for name in ("BlockedAppPath", "CalledByAppPath", "BlockedByPolicy")]
     assert all(label.endswith(":") and len(label) <= 24 for label in detail_labels), f"{tag} has an overly long detail label"
+    action_labels = [values[name] for name in ("RequestReview", "Dismiss")]
+    assert all(len(label) <= 24 and len(label.split()) <= 3 for label in action_labels), f"{tag} has an overly long action label"
+for (tag, key), expected in reviewed_locale_expectations.items():
+    actual = {node.attrib["name"]: node.text for node in languages[tag].findall("string")}[key]
+    assert actual == expected, f"{tag} has unexpected reviewed wording for {key}"
 
 assert not (ROOT / "ToastActivator").exists()
 assert "WDACToast.Activator.exe" not in collector
 
 print("Static WDAC collector and task XML checks passed.")
+
+
+# Event-specific, encoded local review report workflow.
+review_body = function_body("New-WdacReviewPage")
+assert "[Net.WebUtility]::HtmlEncode" in review_body
+assert "[guid]::NewGuid().ToString('N')" in review_body
+assert "review-{0}-{1}.html" in review_body
+assert "$ReviewDirectory" in review_body
+assert "$Result.RawEventXml" not in review_body and "ReportRawEventHeading" not in review_body
+assert "<details><summary>" not in review_body and "<pre" in review_body
+assert "<table" not in review_body.lower() and "$TableRows" not in review_body
+assert "navigator.clipboard.writeText" in review_body
+assert "document.execCommand('copy')" in review_body
+assert "area.select()" in review_body and "setSelectionRange" in review_body
+assert "range.selectNodeContents(details)" in review_body and "details.focus()" in review_body
+assert 'role="status"' in review_body and 'aria-live="polite"' in review_body
+assert '<button class="button" id="copy-details" type="button">' in review_body
+assert "(& $Encode $SupportUri)" in review_body
+assert "ReportExactErrorHeading" in review_body and "ReportCopyButton" in review_body
+assert "$ErrorHeading = $Strings.ReportExactErrorHeading -f $BlockedFileName" in review_body
+assert "(& $Encode $ErrorHeading)" in review_body
+assert "$BlockedFileName = $Strings.UnknownFile" in review_body
+assert "$ReportExplanation = $Strings.ReportExplanation -f $BlockedFileName" in review_body
+assert all(key in review_body for key in ("ReportSupportStepOne", "ReportSupportStepTwo", "ReportSupportStepThree"))
+for value in ("$Strings.ReportCopySuccess", "$Strings.ReportCopyFailure", "$Strings.ReportSupportStepOne", "$Strings.ReportSupportStepTwo", "$Strings.ReportSupportStepThree"):
+    assert f"(& $Encode {value})" in review_body
+report_template = re.search(r"\$Html = @'\n(.*?)\n'@ -f", review_body, re.DOTALL).group(1)
+assert report_template.count("<li>") == 3
+assert report_template.index("<section><h1>{1}</h1><p>{2}</p></section>") < report_template.index("<h2>{3}</h2><p>{4}</p>")
+assert report_template.index("<li>{7}</li>") < report_template.index('href="{8}"')
+assert report_template.index('href="{8}"') < report_template.index("<h2>{10}</h2>")
+support_uri = "https://support.example.test/wdac-review?source=report&amp;kind=request"
+values = ["report value"] * 16
+values[7] = "Explain why this application &amp; its access are needed."
+values[8] = support_uri
+values[9] = "Open Support Portal"
+values[10] = "Blocked Application Details: blocked&lt;app&gt;&amp;.exe"
+report_html = report_template.format(*values)
+assert "<li>Explain why this application & its access are needed.</li>" not in report_html
+assert "<li>Explain why this application &amp; its access are needed.</li>" in report_html
+assert "<h2>Blocked Application Details: blocked&lt;app&gt;&amp;.exe</h2>" in report_html
+assert 'aria-label="Blocked Application Details: blocked&lt;app&gt;&amp;.exe"' in report_html
+
+class ReportLinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.links = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self.links.append(dict(attrs))
+
+
+report_parser = ReportLinkParser()
+report_parser.feed(report_html)
+support_links = [link for link in report_parser.links if link.get("class") == "button"]
+assert len(support_links) == 1 and support_links[0].get("href") == support_uri.replace("&amp;", "&"), (
+    "the Review Report page must open the configured Support Portal"
+)
+invoke_body = function_body("Invoke-WdacToast")
+assert invoke_body.index("New-WdacReviewPage") < invoke_body.index("Show-ToastNotification")
+assert "$ReviewPage.ActivationUri" in invoke_body
+assert "RawEventXml = $Event.ToXml()" in invoke_body
+maintenance_body = function_body("Invoke-WdacToastLogMaintenance")
+assert "$ReviewDirectory" in maintenance_body and "*.html" in maintenance_body
+assert ".AddMonths(-2)" in maintenance_body
+assert "AppData\\Local\\Company\\WDACToast" in profile_cleanup
+assert "Remove-Item -LiteralPath $StateDirectory -Recurse" in profile_cleanup
+
+localization_root = ET.fromstring(localization)
+required_report_keys = {
+    "ReportTitle", "ReportExplanation", "ReportApplicationName",
+    "ReportApplicationPath", "ReportCallingProcess", "ReportPolicyName", "ReportPolicyId",
+    "ReportPolicyVersion", "ReportStatus", "ReportSigningScenario", "ReportRequestedLevel",
+    "ReportValidatedLevel", "ReportSha256", "ReportSha1", "ReportEventTime", "ReportComputer",
+    "ReportActivityId", "ReportProvider", "ReportRecordId", "ReportExactErrorHeading",
+    "ReportCopyHint", "ReportCopyButton", "ReportCopySuccess", "ReportCopyFailure",
+    "ReportSupportInstructions", "ReportSupportStepOne", "ReportSupportStepTwo",
+    "ReportSupportStepThree", "ReportOpenSupport",
+}
+language_key_sets = [{node.get("name") for node in language.findall("string")} for language in localization_root.findall("language")]
+assert language_key_sets and all(keys == language_key_sets[0] for keys in language_key_sets)
+assert required_report_keys <= language_key_sets[0]
+assert "ReportDetailsHeading" not in language_key_sets[0] and "ReportCopyBeforeSupport" not in language_key_sets[0]
+localized_report_keys = {
+    "ReportTitle", "ReportExplanation", "ReportApplicationName", "ReportApplicationPath",
+    "ReportDescription", "ReportProduct", "ReportVersion", "ReportPublisher",
+    "ReportCallingProcess", "ReportCallerDescription", "ReportCallerProduct",
+    "ReportCallerVersion", "ReportCallerPublisher", "ReportPolicyName", "ReportPolicyId",
+    "ReportPolicyVersion", "ReportStatus", "ReportSigningScenario", "ReportRequestedLevel",
+    "ReportValidatedLevel", "ReportSha256", "ReportSha1", "ReportEventTime",
+    "ReportComputer", "ReportActivityId", "ReportProvider", "ReportRecordId",
+    "ReportExactErrorHeading", "ReportCopyHint", "ReportCopyButton", "ReportCopySuccess",
+    "ReportCopyFailure", "ReportSupportHeading", "ReportSupportInstructions",
+    "ReportSupportStepOne", "ReportSupportStepTwo", "ReportSupportStepThree",
+    "ReportOpenSupport",
+}
+# Add only (locale, key) pairs whose complete label is genuinely language-neutral.
+language_neutral_report_values = set()
+localized_values = {
+    language.get("tag"): {node.get("name"): (node.text or "").strip() for node in language.findall("string")}
+    for language in localization_root.findall("language")
+}
+for tag, strings in localized_values.items():
+    assert strings["ReportExactErrorHeading"].count("{0}") == 1, f"{tag} report heading must contain exactly one {{0}} placeholder"
+    if tag != "en":
+        reused_english = {
+            key for key in localized_report_keys
+            if strings[key] == localized_values["en"][key]
+            and (tag, key) not in language_neutral_report_values
+        }
+        assert not reused_english, f"{tag} has English report UI: {sorted(reused_english)}"
+assert "ReportSupportStepThree" in required_strings and "ReportRawEventHeading" not in required_strings
+assert "'ReportSupportStepThree'" in collector and "'ReportRawEventHeading'" not in collector
+assert "local review page" in readme.lower() and "company-wdac-review" in readme
+assert "older than two months" in readme and "sensitive" in readme.lower()

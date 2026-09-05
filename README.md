@@ -4,7 +4,10 @@
 
 ## How it works
 
-The deployment remains **PowerShell-only**. No helper application, custom URI protocol, COM local server, or packaged Windows App SDK application is installed.
+The deployment remains **PowerShell-only**. It installs no helper executable,
+COM local server, or packaged Windows App SDK application. It does register the
+narrowly scoped per-user `company-wdac-review` protocol described below because
+Windows toast protocol activation cannot reliably launch a local `file://` URI.
 
 The script has two entry paths:
 
@@ -62,10 +65,13 @@ font and text shaping.
 The supplied resources include English (`en`), Italian (`it-IT`), Dutch
 (`nl-NL`), German (`de-DE`), French (`fr-FR`), Ukrainian (`uk-UA`), Danish
 (`da-DK`), Spanish for Spain and Argentina (`es-ES`, `es-AR`), and Portuguese
-for Portugal and Brazil (`pt-PT`, `pt-BR`). Keep the English entry because it is
-the configured fallback. Every language entry must contain all string names
-present in the English entry. A custom `ActionLabel` remains unchanged;
-the default **Request Review** label is localized with the rest of the toast.
+for Portugal and Brazil (`pt-PT`, `pt-BR`), Korean for South Korea (`ko-KR`),
+Japanese for Japan (`ja-JP`), Hungarian for Hungary (`hu-HU`), Czech for
+Czechia (`cs-CZ`), Arabic for Morocco (`ar-MA`), and Romanian for Romania
+(`ro-RO`). Keep the English entry because it is the configured fallback. Every
+language entry must contain all string names present in the English entry. A
+custom `ActionLabel` remains unchanged; the default **Request Review** label is
+localized with the rest of the toast.
 
 The source JSON is copied only when it exists. Removing it from a later upgrade
 package does **not** delete a JSON file already installed in Program Files; use
@@ -93,8 +99,9 @@ Edit the supplied JSON before deployment:
 
 Available settings are:
 
-- `SupportUri` — an organization-controlled HTTPS review URL.
-- `ActionLabel` — text for the action that opens `SupportUri`; the default is
+- `SupportUri` — an organization-controlled, HTTPS-only ticket portal URL. It is
+  embedded as the destination inside each local review report, not given event data.
+- `ActionLabel` — text for the action that opens the local review report; the default is
   **Request Review**.
 - `AppId` — a stable application identity, such as `Contoso.WDACToast`.
 - `DisplayName` — the notification sender shown to users.
@@ -134,7 +141,7 @@ The script enables strict mode and stops on errors. A successful installation or
 suppressed duplicate exits `0`; an uncaught installation or rendering error is
 logged and exits `1`.
 
-Mutable notification state, token-named activation records, operational logs, and per-event JSON diagnostics are
+Mutable notification state, local review reports, operational logs, and per-event JSON diagnostics are
 stored in `%LOCALAPPDATA%\Company\WDACToast` for the account running that
 invocation. Event invocations therefore write to the user who receives the
 toast; an elevated or Intune installation writes its installation log beneath
@@ -143,7 +150,7 @@ Operational output is rotated into `Logs\WDACToast-yyyy-MM.log` at each UTC
 month boundary. Installation also registers a separate, hidden-console monthly
 Scheduled Task named `<TaskName> Log Maintenance`. On the first day of each
 month (or when Task Scheduler can next start a missed run), it runs in the
-interactive user's context and removes log and event-diagnostic files whose
+interactive user's context and removes logs, event diagnostics, and review reports whose
 last write time is more than two months old. Thus maintenance remains isolated
 to the same user profile as the notification data and runs in the background.
 The script does not grant Authenticated Users access to a shared machine
@@ -375,7 +382,7 @@ review format remains consistent across Code Integrity provider versions.
 All of this static text, including **Unknown file**, **Not provided**, detail
 labels, and built-in action labels, comes from the selected language entry.
 
-The action row provides a localized **Dismiss** action and a configurable/localized **Request Review** action. **Dismiss** uses Windows system activation to close the notification. **Request Review** opens the configured HTTPS `SupportUri` and uses `afterActivationBehavior="pendingUpdate"` so the notification remains available while the review page opens. The event's user-private JSON diagnostic remains available in the state directory for support workflows, but it is not linked from the toast.
+The action row provides a localized **Dismiss** action and a configurable/localized **Request Review** action. **Dismiss** uses Windows system activation to close the notification. **Request Review** opens that event's local report and uses `afterActivationBehavior="pendingUpdate"` so the notification remains available while the report opens.
 When those files are still available, Windows version metadata supplies the
 description, product, publisher, and version for both the blocked file and its
 caller. That metadata, the raw WDAC status, signing levels, hashes, activity ID,
@@ -392,7 +399,42 @@ The JSON diagnostics select additional event values for support workflows:
 requested and validated signing levels, signing scenario, SHA-256/SHA-1 hashes,
 and caller metadata. `RawEventData` still contains every named value emitted by
 the installed Code Integrity provider, even when a provider version uses a field
-the script does not recognize. The **Request review** action opens `SupportUri`.
+the script does not recognize.
+
+### Local review page and support portal
+
+Before submitting the toast, the renderer creates a collision-safe file named
+`Reviews\review-<record-id>-<random-guid>.html` beneath
+`%LOCALAPPDATA%\Company\WDACToast`. The responsive, self-contained page presents
+the application, caller, policy, signing, hash, event, and provider fields once
+in a selectable plain-text **Exact error details** block, followed by a short
+two-step support decision. A prominent **Copy** button uses the browser
+clipboard API when available and a legacy copy fallback that also works with
+local `file://` reports. The page reports whether copying succeeded; after a
+failure it selects the details so the user can copy them manually. It explains
+the WDAC decision without claiming the blocked file is known malware and keeps
+encoded raw event XML in a collapsed advanced section. All event, localization,
+and configuration values are HTML encoded.
+
+Windows toast protocol activation is not a reliable/supported way to launch a
+`file://` action directly across the supported Windows 10 and 11 versions.
+Accordingly, the renderer registers `company-wdac-review` under the current
+user's `HKCU\Software\Classes`. Its command invokes only the installed signed
+script. The handler accepts a numeric record ID, locates exactly one matching
+file inside the fixed per-user `Reviews` directory, and asks Windows to open it
+with the default browser; it never executes an event-supplied path. This adds a
+per-user protocol registration that security teams must permit and removes on
+reset/uninstall. Deployments that prohibit custom protocols need a separately
+designed HTTPS report service; do not put sensitive event fields in its URL.
+
+The local page and support portal are distinct. The report can contain sensitive
+paths, hashes, device identifiers, and publisher metadata, remains on the device,
+and is not uploaded automatically, including when the support portal is opened.
+Users who believe the block is a mistake should select **Copy**, select
+**Open Support Portal**, create a ticket, and paste the copied details. Review
+files inherit the user's profile ACL and are deleted by monthly maintenance when
+older than two months. Reset, `-Uninstall -CleanupLogs`, and the all-profile
+cleanup script remove them with the rest of the WDACToast state directory.
 
 Code Integrity commonly records paths in NT form, for example
 `\Device\HarddiskVolume3\Program Files\Example\app.exe`. The script uses the
@@ -413,8 +455,8 @@ Each event is written before the notification decision to:
 The JSON includes selected fields, all named `EventData` values, and the complete
 event XML. The directory is created beneath the selected user's profile and uses
 the profile's inherited ACL. The script does not set a custom ACL. JSON and text
-logs have no automatic retention or size limit; manage them separately if your
-support or privacy policy requires retention limits.
+files more than two months old are removed by monthly maintenance. Size is not
+otherwise capped, so align collection and retention with your privacy policy.
 
 Operational activity and caught errors are appended to:
 
@@ -453,8 +495,8 @@ toast submission; this does not remove diagnostic JSON or the text log.
 
 ## Security properties
 
-- Dynamic event values and configured action values are XML escaped before toast XML is created.
-- The toast action accepts only a configured HTTPS URI.
+- Dynamic values are XML escaped in toast markup and HTML encoded in reports.
+- The toast action targets only the constrained per-user handler; the report's support destination is HTTPS-only.
 - Event content is never used to construct a command or executable action.
 - The state file is replaced atomically, and Scheduled Task instances are queued to prevent concurrent state updates.
 - No execution-policy bypass is used.
@@ -623,12 +665,16 @@ $installed = "$env:ProgramFiles\Company\WDACToast\Show-WDACToast.ps1"
 Get-FileHash $installed -Algorithm SHA256
 ```
 
-Then run the current, signed deployment source from an elevated Windows
-PowerShell 5.1 session. This upgrades the installed copy and task; invoking the
-stale installed copy cannot update code that it does not contain:
+Then run the current, signed deployment source outside Program Files from an
+elevated Windows PowerShell 5.1 session, retaining the installation's existing
+identity settings. Use `-Upgrade` so replacement is transactional: unlike
+`-ResetInstallation`, it preserves the existing installation while it verifies
+the replacement and can roll back a failure. Invoking the stale installed copy
+cannot update code that it does not contain:
 
 ```powershell
 & 'C:\Path\To\Current\Show-WDACToast.ps1' `
+    -Upgrade `
     -AppId 'Contoso.WDACToast' `
     -DisplayName 'Contoso Security' `
     -SupportUri 'https://support.contoso.example/wdac-review' `

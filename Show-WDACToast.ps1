@@ -3,6 +3,10 @@ param(
     [ValidateRange(0, [long]::MaxValue)]
     [long]$EventRecordId = 0,
 
+    # Internal target of the narrowly scoped toast protocol handler.
+    [AllowEmptyString()]
+    [string]$ReviewActivationUri = '',
+
     [ValidateRange(0, 1440)]
     [int]$DuplicateCooldownMinutes = 5,
 
@@ -113,7 +117,11 @@ foreach ($Name in $DefaultConfiguration.Keys) {
 if (-not $LogoWasConfigured -and [string]::IsNullOrWhiteSpace([string]$LogoPath)) {
     $LogoPath = Join-Path $InstallDirectory 'MicrosoftDefenderShield.png'
 }
-if ([string]::IsNullOrWhiteSpace([string]$SupportUri) -or $SupportUri -notmatch '^https://') {
+$ParsedSupportUri = $null
+if ([string]::IsNullOrWhiteSpace([string]$SupportUri) -or
+    -not [Uri]::TryCreate($SupportUri, [UriKind]::Absolute, [ref]$ParsedSupportUri) -or
+    -not [string]::Equals($ParsedSupportUri.Scheme, 'https', [StringComparison]::OrdinalIgnoreCase) -or
+    [string]::IsNullOrWhiteSpace($ParsedSupportUri.Host)) {
     throw "SupportUri in '$ConfigurationFile' must be an HTTPS URI."
 }
 foreach ($RequiredName in @('ActionLabel', 'AppId', 'DisplayName', 'InstallDirectory', 'TaskName')) {
@@ -137,6 +145,8 @@ $WindowStyle = [string]$WindowStyle
 $LogName = 'Microsoft-Windows-CodeIntegrity/Operational'
 $StateDirectory = Join-Path $env:LOCALAPPDATA 'Company\WDACToast'
 $LogDirectory = Join-Path $StateDirectory 'Logs'
+$ReviewDirectory = Join-Path $StateDirectory 'Reviews'
+$ReviewProtocol = 'company-wdac-review'
 $CurrentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $StateFile = Join-Path $StateDirectory "NotificationState-$CurrentSid.json"
 $InstalledScript = Join-Path $InstallDirectory 'Show-WDACToast.ps1'
@@ -148,6 +158,16 @@ function Ensure-CurrentUserAppIdentity {
     New-Item -Path $Path -Force | Out-Null
     New-ItemProperty -Path $Path -Name DisplayName -Value $DisplayName -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $Path -Name ShowInSettings -Value 1 -PropertyType DWord -Force | Out-Null
+    # Toast protocol activation does not reliably permit file:// targets. Register
+    # a per-user handler which accepts only our numeric record URI; the activation
+    # entry point validates it again before opening an existing report.
+    $ProtocolPath = "HKCU:\Software\Classes\$ReviewProtocol"
+    New-Item -Path "$ProtocolPath\shell\open\command" -Force | Out-Null
+    New-ItemProperty -Path $ProtocolPath -Name '(default)' -Value 'WDAC review report' -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $ProtocolPath -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
+    $ProtocolCommand = '"{0}" -NoProfile -NonInteractive -WindowStyle {1} -ExecutionPolicy {2} -File "{3}" -ReviewActivationUri "%1"' -f `
+        (Join-Path $PSHOME 'powershell.exe'), $WindowStyle, $ExecutionPolicy, $InstalledScript
+    New-ItemProperty -Path "$ProtocolPath\shell\open\command" -Name '(default)' -Value $ProtocolCommand -PropertyType String -Force | Out-Null
     Write-WdacToastLog -Message "Ensured AppUserModelID '$AppId' for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
 }
 
@@ -156,11 +176,13 @@ function Remove-CurrentUserAppIdentity {
     foreach ($RegisteredAppId in @($AppIds | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
         Remove-Item -LiteralPath "HKCU:\Software\Classes\AppUserModelId\$RegisteredAppId" -Recurse -Force -ErrorAction SilentlyContinue
     }
+    Remove-Item -LiteralPath "HKCU:\Software\Classes\$ReviewProtocol" -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 function Initialize-WdacToastStateDirectory {
     New-Item -Path $StateDirectory -ItemType Directory -Force | Out-Null
     New-Item -Path $LogDirectory -ItemType Directory -Force | Out-Null
+    New-Item -Path $ReviewDirectory -ItemType Directory -Force | Out-Null
 }
 
 function Write-WdacToastLog {
@@ -199,7 +221,13 @@ function Invoke-WdacToastLogMaintenance {
             $RemovedCount++
         }
     }
-    Write-WdacToastLog -Message "Monthly log maintenance removed $RemovedCount file(s) older than $($Cutoff.ToString('o'))."
+    foreach ($ReviewFile in @(Get-ChildItem -LiteralPath $ReviewDirectory -Filter '*.html' -File -ErrorAction SilentlyContinue)) {
+        if ($ReviewFile.LastWriteTimeUtc -lt $Cutoff) {
+            Remove-Item -LiteralPath $ReviewFile.FullName -Force -ErrorAction Stop
+            $RemovedCount++
+        }
+    }
+    Write-WdacToastLog -Message "Monthly log and review maintenance removed $RemovedCount file(s) older than $($Cutoff.ToString('o'))."
 }
 
 function Write-ConfigurationCheck {
@@ -351,7 +379,7 @@ function Get-WdacToastStrings {
     foreach ($StringNode in @($Selected.string)) {
         $Strings[[string]$StringNode.name] = [string]$StringNode.InnerText
     }
-    $RequiredStrings = @('Title', 'Message', 'UnknownFile', 'NotProvided', 'BlockedAppPath', 'CalledByAppPath', 'BlockedByPolicy', 'VersionFormat', 'RequestReview', 'Dismiss')
+    $RequiredStrings = @('Title', 'Message', 'UnknownFile', 'NotProvided', 'BlockedAppPath', 'CalledByAppPath', 'BlockedByPolicy', 'VersionFormat', 'RequestReview', 'Dismiss', 'ReportTitle', 'ReportExplanation', 'ReportApplicationName', 'ReportApplicationPath', 'ReportDescription', 'ReportProduct', 'ReportVersion', 'ReportPublisher', 'ReportCallingProcess', 'ReportCallerDescription', 'ReportCallerProduct', 'ReportCallerVersion', 'ReportCallerPublisher', 'ReportPolicyName', 'ReportPolicyId', 'ReportPolicyVersion', 'ReportStatus', 'ReportSigningScenario', 'ReportRequestedLevel', 'ReportValidatedLevel', 'ReportSha256', 'ReportSha1', 'ReportEventTime', 'ReportComputer', 'ReportActivityId', 'ReportProvider', 'ReportRecordId', 'ReportExactErrorHeading', 'ReportCopyHint', 'ReportCopyButton', 'ReportCopySuccess', 'ReportCopyFailure', 'ReportSupportHeading', 'ReportSupportInstructions', 'ReportSupportStepOne', 'ReportSupportStepTwo', 'ReportSupportStepThree', 'ReportOpenSupport')
     foreach ($RequiredString in $RequiredStrings) {
         if (-not $Strings.ContainsKey($RequiredString) -or [string]::IsNullOrWhiteSpace([string]$Strings[$RequiredString])) {
             throw "Language '$($Selected.tag)' is missing required string '$RequiredString' in '$LocalizationFile'."
@@ -990,6 +1018,75 @@ function Get-StableHash {
     }
 }
 
+function Open-WdacReviewPage {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ActivationUri)
+
+    $Match = [regex]::Match($ActivationUri, '^company-wdac-review://open/([0-9]+)/([0-9a-f]{32})$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $Match.Success) { throw 'The review activation URI is invalid.' }
+    $RecordId = [long]$Match.Groups[1].Value
+    $Nonce = $Match.Groups[2].Value
+    $Path = Join-Path $ReviewDirectory "review-$RecordId-$Nonce.html"
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "The local review report for record $RecordId was not found." }
+    Start-Process -FilePath $Path
+}
+
+function New-WdacReviewPage {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Result,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Strings,
+        [Parameter(Mandatory)][ValidatePattern('^https://')][string]$SupportUri
+    )
+
+    New-Item -Path $ReviewDirectory -ItemType Directory -Force | Out-Null
+    $Encode = { param([AllowNull()]$Value) [Net.WebUtility]::HtmlEncode($(if ([string]::IsNullOrWhiteSpace([string]$Value)) { $Strings.NotProvided } else { [string]$Value })) }
+    $Rows = [ordered]@{
+        $Strings.ReportApplicationName = $Result.FileName; $Strings.ReportApplicationPath = $Result.FilePath
+        $Strings.ReportDescription = $Result.FileDescription; $Strings.ReportProduct = $Result.ProductName
+        $Strings.ReportVersion = $Result.FileVersion; $Strings.ReportPublisher = $Result.Publisher
+        $Strings.ReportCallingProcess = $Result.ProcessPath; $Strings.ReportCallerDescription = $Result.CallerDescription
+        $Strings.ReportCallerProduct = $Result.CallerProductName; $Strings.ReportCallerVersion = $Result.CallerFileVersion
+        $Strings.ReportCallerPublisher = $Result.CallerPublisher; $Strings.ReportPolicyName = $Result.PolicyName
+        $Strings.ReportPolicyId = $Result.PolicyId; $Strings.ReportPolicyVersion = $Result.PolicyVersion
+        $Strings.ReportStatus = $Result.Status; $Strings.ReportSigningScenario = $Result.SigningScenario
+        $Strings.ReportRequestedLevel = $Result.RequestedSigningLevel; $Strings.ReportValidatedLevel = $Result.ValidatedSigningLevel
+        $Strings.ReportSha256 = $Result.Sha256Hash; $Strings.ReportSha1 = $Result.Sha1Hash
+        $Strings.ReportEventTime = $Result.TimeCreated; $Strings.ReportComputer = $Result.Computer
+        $Strings.ReportActivityId = $Result.ActivityId; $Strings.ReportProvider = $Result.ProviderName
+        $Strings.ReportRecordId = $Result.EventRecordId
+    }
+    $ErrorText = foreach ($Entry in $Rows.GetEnumerator()) { '{0}: {1}' -f $Entry.Key, $(if ([string]::IsNullOrWhiteSpace([string]$Entry.Value)) { $Strings.NotProvided } else { [string]$Entry.Value }) }
+    $BlockedFileName = [string]$Result.FileName
+    if ([string]::IsNullOrWhiteSpace($BlockedFileName) -and -not [string]::IsNullOrWhiteSpace([string]$Result.FilePath)) {
+        $BlockedFileName = [string]$Result.FilePath -replace '^.*[\\/]', ''
+    }
+    if ([string]::IsNullOrWhiteSpace($BlockedFileName)) {
+        $BlockedFileName = $Strings.UnknownFile
+    }
+    $ReportExplanation = $Strings.ReportExplanation -f $BlockedFileName
+    $ErrorHeading = $Strings.ReportExactErrorHeading -f $BlockedFileName
+    $Nonce = [guid]::NewGuid().ToString('N')
+    $FileName = 'review-{0}-{1}.html' -f ([long]$Result.EventRecordId), $Nonce
+    $Path = Join-Path $ReviewDirectory $FileName
+    $Html = @'
+<!doctype html><html lang="{0}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{1}</title>
+<style>body{{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#f4f6f8;color:#17202a}}main{{max-width:960px;margin:auto;padding:clamp(1rem,4vw,3rem)}}section{{background:#fff;border-radius:.6rem;padding:1.25rem;margin:1rem 0;box-shadow:0 1px 4px #0002}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f3f3;padding:1rem;user-select:text}}.button{{display:inline-block;border:0;background:#075ea8;color:#fff;padding:.75rem 1rem;border-radius:.3rem;text-decoration:none;font:inherit;font-weight:600;cursor:pointer}}.copy-row{{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}}#copy-status{{font-weight:600}}</style></head><body><main>
+<section><h1>{1}</h1><p>{2}</p></section>
+<section><h2>{3}</h2><p>{4}</p><ol><li>{5}</li><li>{6}</li><li>{7}</li></ol><a class="button" href="{8}" target="_blank" rel="noopener noreferrer">{9}</a></section>
+<section><h2>{10}</h2><p>{11}</p><div class="copy-row"><button class="button" id="copy-details" type="button">{12}</button><span id="copy-status" role="status" aria-live="polite"></span><span id="copy-success" hidden>{14}</span><span id="copy-failure" hidden>{15}</span></div><pre id="error-details" aria-label="{10}" tabindex="0">{13}</pre></section></main>
+<script>(function(){{'use strict';var button=document.getElementById('copy-details'),details=document.getElementById('error-details'),status=document.getElementById('copy-status'),success=document.getElementById('copy-success'),failure=document.getElementById('copy-failure');function fallback(text){{var area=document.createElement('textarea');area.value=text;area.setAttribute('readonly','');area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();area.setSelectionRange(0,area.value.length);var copied=false;try{{copied=document.execCommand('copy')}}catch(e){{copied=false}}finally{{document.body.removeChild(area)}}return copied}}function show(copied){{status.textContent=(copied?success:failure).textContent;if(!copied){{var selection=window.getSelection(),range=document.createRange();range.selectNodeContents(details);selection.removeAllRanges();selection.addRange(range);details.focus()}}}}button.addEventListener('click',function(){{var text=details.textContent;if(navigator.clipboard&&navigator.clipboard.writeText){{navigator.clipboard.writeText(text).then(function(){{show(true)}},function(){{show(fallback(text))}})}}else{{show(fallback(text))}}}})}}());</script></body></html>
+'@ -f (& $Encode $Result.Language), (& $Encode $Strings.ReportTitle), (& $Encode $ReportExplanation),
+        (& $Encode $Strings.ReportSupportHeading), (& $Encode $Strings.ReportSupportInstructions),
+        (& $Encode $Strings.ReportSupportStepOne), (& $Encode $Strings.ReportSupportStepTwo),
+        (& $Encode $Strings.ReportSupportStepThree), (& $Encode $SupportUri), (& $Encode $Strings.ReportOpenSupport),
+        (& $Encode $ErrorHeading), (& $Encode $Strings.ReportCopyHint), (& $Encode $Strings.ReportCopyButton),
+        (& $Encode ($ErrorText -join [Environment]::NewLine)), (& $Encode $Strings.ReportCopySuccess),
+        (& $Encode $Strings.ReportCopyFailure)
+    Set-Content -LiteralPath $Path -Value $Html -Encoding UTF8
+    return [pscustomobject]@{ Path = $Path; ActivationUri = "$ReviewProtocol`://open/$([long]$Result.EventRecordId)/$Nonce" }
+}
+
 function Show-ToastNotification {
     param(
         [Parameter(Mandatory)][string]$Title,
@@ -997,6 +1094,7 @@ function Show-ToastNotification {
         [Parameter(Mandatory)][System.Collections.IDictionary]$Details,
         [Parameter(Mandatory)][string]$Language,
         [Parameter(Mandatory)][System.Collections.IDictionary]$Strings,
+        [Parameter(Mandatory)][string]$ReviewPageUri,
         [Parameter(Mandatory)][string]$Tag,
         [Parameter(Mandatory)][string]$Group
     )
@@ -1028,8 +1126,9 @@ function Show-ToastNotification {
     }
 
     $LocalizedActionLabel = if ($ActionLabel -eq 'Request Review') { $Strings.RequestReview } else { $ActionLabel }
+    $EscapedReviewPageUri = & $Escape $ReviewPageUri
     $ActionXml = '<actions><action content="{0}" arguments="dismiss" activationType="system"/><action content="{1}" arguments="{2}" activationType="protocol" afterActivationBehavior="pendingUpdate"/></actions>' -f
-        (& $Escape $Strings.Dismiss), (& $Escape $LocalizedActionLabel), (& $Escape $SupportUri)
+        (& $Escape $Strings.Dismiss), (& $Escape $LocalizedActionLabel), $EscapedReviewPageUri
 
     $ImageXml = ''
     if (-not [string]::IsNullOrWhiteSpace($LogoPath)) {
@@ -1056,8 +1155,8 @@ function Show-ToastNotification {
 
     # The BCP-47 lang attribute is part of the Microsoft ToastGeneric schema and
     # lets Windows apply the appropriate font and text shaping to this payload.
-    $ToastXml = '<toast><visual><binding template="ToastGeneric" lang="{0}">{1}<text hint-maxLines="1">{2}</text><text hint-maxLines="2">{3}</text><group><subgroup>{4}</subgroup></group></binding></visual>{5}</toast>' -f
-        (& $Escape $Language), $ImageXml, (& $Escape $Title), (& $Escape $Message), ($DetailNodes -join ''), $ActionXml
+    $ToastXml = '<toast launch="{0}" activationType="protocol" afterActivationBehavior="pendingUpdate"><visual><binding template="ToastGeneric" lang="{1}">{2}<text hint-maxLines="1">{3}</text><text hint-maxLines="2">{4}</text><group><subgroup>{5}</subgroup></group></binding></visual>{6}</toast>' -f
+        $EscapedReviewPageUri, (& $Escape $Language), $ImageXml, (& $Escape $Title), (& $Escape $Message), ($DetailNodes -join ''), $ActionXml
 
     $Document = [Windows.Data.Xml.Dom.XmlDocument]::new()
     $Document.LoadXml($ToastXml)
@@ -1069,6 +1168,10 @@ function Show-ToastNotification {
 
 function Invoke-WdacToast {
     Write-WdacToastLog -Message "Invocation started with EventRecordId=$EventRecordId, Upgrade=$Upgrade, ResetInstallation=$ResetInstallation, Uninstall=$Uninstall, CleanupLogs=$CleanupLogs, AppId='$AppId', TaskName='$TaskName', InstallDirectory='$InstallDirectory', ExecutionPolicy='$ExecutionPolicy', WindowStyle='$WindowStyle'."
+    if (-not [string]::IsNullOrWhiteSpace($ReviewActivationUri)) {
+        Open-WdacReviewPage -ActivationUri $ReviewActivationUri
+        return
+    }
     if ($Upgrade -and $EventRecordId -ne 0) {
         throw 'Upgrade requires EventRecordId = 0 and cannot be combined with event processing.'
     }
@@ -1163,6 +1266,7 @@ function Invoke-WdacToast {
 
     $Result = [ordered]@{
         EventId = $Event.Id
+        Language = $Localization.Language
         EventRecordId = $Event.RecordId
         TimeCreated = $Event.TimeCreated
         Computer = $Event.MachineName
@@ -1197,6 +1301,8 @@ function Invoke-WdacToast {
     $LogFile = Join-Path $LogDirectory ('WDAC-{0}-{1}.json' -f $Event.TimeCreated.ToString('yyyyMMdd-HHmmss'), $Event.RecordId)
     $Result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LogFile -Encoding UTF8
     Write-WdacToastLog -Message "Wrote event diagnostics to '$LogFile'. Parsed FilePath='$FilePath'; ProcessPath='$ProcessPath'; PolicyName='$PolicyName'; PolicyId='$PolicyId'; Status='$Status'."
+    $ReviewPage = New-WdacReviewPage -Result $Result -Strings $Localization.Strings -SupportUri $SupportUri
+    Write-WdacToastLog -Message "Wrote local review report to '$($ReviewPage.Path)'."
 
     $NotificationKeySource = if ([string]::IsNullOrWhiteSpace($FilePath)) { "event-$($Event.RecordId)" } else { $FilePath.ToLowerInvariant() }
     $KeyHash = Get-StableHash -Text $NotificationKeySource
@@ -1233,6 +1339,7 @@ function Invoke-WdacToast {
         -Details $ToastDetails `
         -Language $Localization.Language `
         -Strings $Localization.Strings `
+        -ReviewPageUri $ReviewPage.ActivationUri `
         -Tag $ToastTag `
         -Group $ToastGroup
     Write-WdacToastLog -Message 'The Windows notification platform accepted the toast. Windows can still suppress its presentation because of Do Not Disturb/Focus Assist or per-app notification settings.'
