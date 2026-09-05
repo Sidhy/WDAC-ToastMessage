@@ -402,13 +402,16 @@ the script does not recognize.
 
 Before submitting the toast, the renderer creates a collision-safe file named
 `Reviews\review-<record-id>-<random-guid>.html` beneath
-`%LOCALAPPDATA%\Company\WDACToast`. The responsive, self-contained page shows
-the application, caller, policy, signing, hash, event, and provider fields; a
-plain-text **Exact error details** block that remains selectable when scripting
-is disabled; an explanation of the WDAC decision; and encoded raw event XML in
-a collapsed advanced section. It contains no JavaScript and makes no network
-request until the user chooses the organization-controlled HTTPS support link.
-All event, localization, and configuration values are HTML encoded.
+`%LOCALAPPDATA%\Company\WDACToast`. The responsive, self-contained page presents
+the application, caller, policy, signing, hash, event, and provider fields once
+in a selectable plain-text **Exact error details** block, followed by a short
+two-step support decision. A prominent **Copy** button uses the browser
+clipboard API when available and a legacy copy fallback that also works with
+local `file://` reports. The page reports whether copying succeeded; after a
+failure it selects the details so the user can copy them manually. It explains
+the WDAC decision without claiming the blocked file is known malware and keeps
+encoded raw event XML in a collapsed advanced section. All event, localization,
+and configuration values are HTML encoded.
 
 Windows toast protocol activation is not a reliable/supported way to launch a
 `file://` action directly across the supported Windows 10 and 11 versions.
@@ -423,8 +426,9 @@ designed HTTPS report service; do not put sensitive event fields in its URL.
 
 The local page and support portal are distinct. The report can contain sensitive
 paths, hashes, device identifiers, and publisher metadata, remains on the device,
-and is not uploaded automatically. Users should copy **Exact error details**
-before selecting **Open support portal**, then paste it into the ticket. Review
+and is not uploaded automatically, including when the support portal is opened.
+Users who believe the block is a mistake should select **Copy**, select
+**Open Support Portal**, create a ticket, and paste the copied details. Review
 files inherit the user's profile ACL and are deleted by monthly maintenance when
 older than two months. Reset, `-Uninstall -CleanupLogs`, and the all-profile
 cleanup script remove them with the rest of the WDACToast state directory.

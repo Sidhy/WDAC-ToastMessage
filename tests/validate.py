@@ -391,12 +391,24 @@ assert "review-{0}-{1}.html" in review_body
 assert "$ReviewDirectory" in review_body
 assert "$Result.RawEventXml" in review_body and "(& $Encode $Result.RawEventXml)" in review_body
 assert "<details><summary>" in review_body and "<pre" in review_body
-assert "<script" not in review_body.lower()
+assert "<table" not in review_body.lower() and "$TableRows" not in review_body
+assert "navigator.clipboard.writeText" in review_body
+assert "document.execCommand('copy')" in review_body
+assert "area.select()" in review_body and "setSelectionRange" in review_body
+assert "range.selectNodeContents(details)" in review_body and "details.focus()" in review_body
+assert 'role="status"' in review_body and 'aria-live="polite"' in review_body
+assert '<button class="button" id="copy-details" type="button">' in review_body
 assert "(& $Encode $SupportUri)" in review_body
-assert "ReportExactErrorHeading" in review_body and "ReportCopyBeforeSupport" in review_body
+assert "ReportExactErrorHeading" in review_body and "ReportCopyButton" in review_body
+assert "ReportSupportStepOne" in review_body and "ReportSupportStepTwo" in review_body
+for value in ("$Strings.ReportCopySuccess", "$Strings.ReportCopyFailure", "$Strings.ReportSupportStepOne", "$Strings.ReportSupportStepTwo"):
+    assert f"(& $Encode {value})" in review_body
 report_template = re.search(r"\$Html = @'\n(.*?)\n'@ -f", review_body, re.DOTALL).group(1)
 support_uri = "https://support.example.test/wdac-review?source=report&amp;kind=request"
-report_html = report_template.format(*(["report value"] * 11), support_uri, "Open Support Portal", "Raw event", "event XML")
+values = ["report value"] * 17
+values[11] = support_uri
+values[12] = "Open Support Portal"
+report_html = report_template.format(*values)
 
 class ReportLinkParser(HTMLParser):
     def __init__(self):
@@ -426,16 +438,31 @@ assert "Remove-Item -LiteralPath $StateDirectory -Recurse" in profile_cleanup
 
 localization_root = ET.fromstring(localization)
 required_report_keys = {
-    "ReportTitle", "ReportExplanation", "ReportDetailsHeading", "ReportApplicationName",
+    "ReportTitle", "ReportExplanation", "ReportApplicationName",
     "ReportApplicationPath", "ReportCallingProcess", "ReportPolicyName", "ReportPolicyId",
     "ReportPolicyVersion", "ReportStatus", "ReportSigningScenario", "ReportRequestedLevel",
     "ReportValidatedLevel", "ReportSha256", "ReportSha1", "ReportEventTime", "ReportComputer",
     "ReportActivityId", "ReportProvider", "ReportRecordId", "ReportExactErrorHeading",
-    "ReportCopyHint", "ReportSupportInstructions", "ReportCopyBeforeSupport",
+    "ReportCopyHint", "ReportCopyButton", "ReportCopySuccess", "ReportCopyFailure",
+    "ReportSupportInstructions", "ReportSupportStepOne", "ReportSupportStepTwo",
     "ReportOpenSupport", "ReportRawEventHeading",
 }
 language_key_sets = [{node.get("name") for node in language.findall("string")} for language in localization_root.findall("language")]
 assert language_key_sets and all(keys == language_key_sets[0] for keys in language_key_sets)
 assert required_report_keys <= language_key_sets[0]
+assert "ReportDetailsHeading" not in language_key_sets[0] and "ReportCopyBeforeSupport" not in language_key_sets[0]
+localized_report_keys = {
+    "ReportTitle", "ReportExplanation", "ReportExactErrorHeading", "ReportCopyHint",
+    "ReportCopyButton", "ReportCopySuccess", "ReportCopyFailure", "ReportSupportHeading",
+    "ReportSupportInstructions", "ReportSupportStepOne", "ReportSupportStepTwo",
+    "ReportOpenSupport", "ReportRawEventHeading",
+}
+localized_values = {
+    language.get("tag"): {node.get("name"): (node.text or "").strip() for node in language.findall("string")}
+    for language in localization_root.findall("language")
+}
+for tag, strings in localized_values.items():
+    if tag != "en":
+        assert all(strings[key] != localized_values["en"][key] for key in localized_report_keys), f"{tag} has English report UI"
 assert "local review page" in readme.lower() and "company-wdac-review" in readme
 assert "older than two months" in readme and "sensitive" in readme.lower()
