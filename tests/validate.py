@@ -367,13 +367,25 @@ assert set(languages) == expected_languages
 required_strings = {node.attrib["name"] for node in languages["en"].findall("string")}
 assert {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "RequestReview", "Dismiss"} <= required_strings
 english_strings = {node.attrib["name"]: node.text for node in languages["en"].findall("string")}
+approved_english_explanation = (
+    "Your organization blocked this application because it is not approved for use or may present a security risk. "
+    "Some legitimate applications and Windows tools can also be blocked because they are commonly misused by attackers. "
+    "This does not mean the application is malware."
+)
+assert english_strings["Message"] == approved_english_explanation
+assert english_strings["ReportExplanation"] == approved_english_explanation
 assert english_strings["BlockedAppPath"] == "Blocked App:"
 assert english_strings["CalledByAppPath"] == "Executed by:"
 assert english_strings["BlockedByPolicy"] == "WDAC Policy:"
 for tag, language in languages.items():
     strings = language.findall("string")
+    values = {node.attrib["name"]: (node.text or "").strip() for node in strings}
     assert {node.attrib["name"] for node in strings} == required_strings, f"{tag} has incomplete localization"
     assert all((node.text or "").strip() for node in strings), f"{tag} has an empty localized string"
+    assert values["Message"] and values["ReportExplanation"], f"{tag} has an empty explanation"
+    assert values["Message"] == values["ReportExplanation"], f"{tag} has inconsistent toast and report explanations"
+    if tag != "en":
+        assert values["Message"] != approved_english_explanation, f"{tag} does not have a locale-specific explanation"
     detail_labels = [next(node.text for node in strings if node.attrib["name"] == name) for name in ("BlockedAppPath", "CalledByAppPath", "BlockedByPolicy")]
     assert all(label.endswith(":") and len(label) <= 24 for label in detail_labels), f"{tag} has an overly long detail label"
 
