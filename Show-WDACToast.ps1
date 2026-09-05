@@ -60,7 +60,10 @@ param(
 
     # Valid only with Uninstall. Deletes only the LOCALAPPDATA state belonging
     # to the execution account (for example, only SYSTEM's state under Intune).
-    [switch]$CleanupLogs
+    [switch]$CleanupLogs,
+
+    # Internal entry point used by the monthly log-maintenance Scheduled Task.
+    [switch]$LogMaintenance
 )
 
 Set-StrictMode -Version Latest
@@ -138,6 +141,7 @@ $CurrentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Val
 $StateFile = Join-Path $StateDirectory "NotificationState-$CurrentSid.json"
 $InstalledScript = Join-Path $InstallDirectory 'Show-WDACToast.ps1'
 $DefaultLogoPath = Join-Path $InstallDirectory 'MicrosoftDefenderShield.png'
+$LogMaintenanceTaskName = "$TaskName Log Maintenance"
 
 function Ensure-CurrentUserAppIdentity {
     $Path = "HKCU:\Software\Classes\AppUserModelId\$AppId"
@@ -166,13 +170,29 @@ function Write-WdacToastLog {
     }
     try {
         New-Item -Path $LogDirectory -ItemType Directory -Force -ErrorAction Stop | Out-Null
-        Add-Content -LiteralPath (Join-Path $LogDirectory 'WDACToast.log') -Value $Entry -Encoding UTF8 -ErrorAction Stop
+        # The month in the file name provides deterministic rotation without a
+        # rename race when several event-triggered instances run concurrently.
+        $MonthlyLog = 'WDACToast-{0}.log' -f (Get-Date).ToUniversalTime().ToString('yyyy-MM')
+        Add-Content -LiteralPath (Join-Path $LogDirectory $MonthlyLog) -Value $Entry -Encoding UTF8 -ErrorAction Stop
     }
     catch {
         # Logging must never hide the original failure. The task history still
         # receives this fallback when the user's local log cannot be written.
         Write-Warning "$Entry (file logging failed: $($_.Exception.Message))"
     }
+}
+
+function Invoke-WdacToastLogMaintenance {
+    Initialize-WdacToastStateDirectory
+    $Cutoff = (Get-Date).ToUniversalTime().AddMonths(-2)
+    $RemovedCount = 0
+    foreach ($LogFile in @(Get-ChildItem -LiteralPath $LogDirectory -File -ErrorAction SilentlyContinue)) {
+        if ($LogFile.LastWriteTimeUtc -lt $Cutoff) {
+            Remove-Item -LiteralPath $LogFile.FullName -Force -ErrorAction Stop
+            $RemovedCount++
+        }
+    }
+    Write-WdacToastLog -Message "Monthly log maintenance removed $RemovedCount file(s) older than $($Cutoff.ToString('o'))."
 }
 
 function Write-ConfigurationCheck {
@@ -344,6 +364,7 @@ function Test-WdacToastConfiguration {
     Write-WdacToastLog -Message "Starting configuration checks. Host=$($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion); User=$([System.Security.Principal.WindowsIdentity]::GetCurrent().Name); Interactive=$([Environment]::UserInteractive)."
     $Results = [System.Collections.Generic.List[bool]]::new()
     $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    $MaintenanceTask = Get-ScheduledTask -TaskName $LogMaintenanceTaskName -ErrorAction SilentlyContinue
 
     $Results.Add((Write-ConfigurationCheck -Name 'Installed script' -Passed (Test-Path -LiteralPath $InstalledScript -PathType Leaf) -SuccessMessage $InstalledScript -FailureMessage "The installed script is missing at '$InstalledScript'."))
     if ($IncludeRendererChecks) {
@@ -359,6 +380,7 @@ function Test-WdacToastConfiguration {
     }
 
     $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task' -Passed ($null -ne $Task) -SuccessMessage "Task '$TaskName' exists." -FailureMessage "Computer-level task '$TaskName' does not exist."))
+    $Results.Add((Write-ConfigurationCheck -Name 'Log maintenance task' -Passed ($null -ne $MaintenanceTask) -SuccessMessage "Monthly task '$LogMaintenanceTaskName' exists." -FailureMessage "Monthly log maintenance task '$LogMaintenanceTaskName' does not exist."))
     if ($null -ne $Task) {
         $TaskAction = @($Task.Actions) | Select-Object -First 1
         $TaskExecute = if ($null -ne $TaskAction) { [string]$TaskAction.Execute } else { '' }
@@ -499,17 +521,34 @@ function Install-WdacToast {
     Register-ScheduledTask -TaskName $TaskName -Xml $TaskXml -Force | Out-Null
     Write-WdacToastLog -Message "Registered Scheduled Task '$TaskName' for the well-known INTERACTIVE group (S-1-5-4) at least privilege with execution policy '$ExecutionPolicy'."
 
+    $MaintenanceTaskXml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Rotates and removes expired WDAC notification logs for the currently interactive user.</Description></RegistrationInfo>
+  <Triggers><CalendarTrigger><StartBoundary>2024-01-01T03:00:00</StartBoundary><Enabled>true</Enabled><ScheduleByMonth><DaysOfMonth><Day>1</Day></DaysOfMonth><Months><January/><February/><March/><April/><May/><June/><July/><August/><September/><October/><November/><December/></Months></ScheduleByMonth></CalendarTrigger></Triggers>
+  <Principals><Principal id="Author"><GroupId>S-1-5-4</GroupId><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><ExecutionTimeLimit>PT5M</ExecutionTimeLimit><Priority>7</Priority></Settings>
+  <Actions Context="Author"><Exec><Command>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</Command><Arguments>-NoProfile -NonInteractive -WindowStyle $WindowStyle -ExecutionPolicy $ExecutionPolicy -File &quot;$EscapedScript&quot; -LogMaintenance -ExecutionPolicy $ExecutionPolicy -WindowStyle $WindowStyle</Arguments></Exec></Actions>
+</Task>
+"@
+    Register-ScheduledTask -TaskName $LogMaintenanceTaskName -Xml $MaintenanceTaskXml -Force | Out-Null
+    Write-WdacToastLog -Message "Registered monthly Scheduled Task '$LogMaintenanceTaskName' to remove log files older than two months."
+
     if (-not $DeferMigration) {
         $RegisteredTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
         if ($null -eq $RegisteredTask) { throw "Scheduled Task '$TaskName' was not registered successfully." }
+        $RegisteredMaintenanceTask = Get-ScheduledTask -TaskName $LogMaintenanceTaskName -ErrorAction Stop
+        if ($null -eq $RegisteredMaintenanceTask) { throw "Scheduled Task '$LogMaintenanceTaskName' was not registered successfully." }
         foreach ($PreviousInstallation in $PreviousInstallations) {
             if (-not [string]::IsNullOrWhiteSpace($PreviousInstallation.TaskName) -and
                 -not [string]::Equals($PreviousInstallation.TaskName, $TaskName, [StringComparison]::OrdinalIgnoreCase)) {
-                if ($null -ne (Get-ScheduledTask -TaskName $PreviousInstallation.TaskName -ErrorAction SilentlyContinue)) {
-                    Unregister-ScheduledTask -TaskName $PreviousInstallation.TaskName -Confirm:$false -ErrorAction Stop
-                }
-                if ($null -ne (Get-ScheduledTask -TaskName $PreviousInstallation.TaskName -ErrorAction SilentlyContinue)) {
-                    throw "Previous Scheduled Task '$($PreviousInstallation.TaskName)' is still registered."
+                foreach ($PreviousTask in @($PreviousInstallation.TaskName, "$($PreviousInstallation.TaskName) Log Maintenance")) {
+                    if ($null -ne (Get-ScheduledTask -TaskName $PreviousTask -ErrorAction SilentlyContinue)) {
+                        Unregister-ScheduledTask -TaskName $PreviousTask -Confirm:$false -ErrorAction Stop
+                    }
+                    if ($null -ne (Get-ScheduledTask -TaskName $PreviousTask -ErrorAction SilentlyContinue)) {
+                        throw "Previous Scheduled Task '$PreviousTask' is still registered."
+                    }
                 }
             }
         }
@@ -580,8 +619,13 @@ function Upgrade-WdacToastInstallation {
         Copy-Item -LiteralPath $InstallDirectory -Destination $BackupDirectory -Recurse -Force -ErrorAction Stop
     }
     $PreviousTaskXml = $null
+    $PreviousMaintenanceTaskName = "$PreviousTaskName Log Maintenance"
+    $PreviousMaintenanceTaskXml = $null
     if ($null -ne (Get-ScheduledTask -TaskName $PreviousTaskName -ErrorAction SilentlyContinue)) {
         $PreviousTaskXml = Export-ScheduledTask -TaskName $PreviousTaskName -ErrorAction Stop
+    }
+    if ($null -ne (Get-ScheduledTask -TaskName $PreviousMaintenanceTaskName -ErrorAction SilentlyContinue)) {
+        $PreviousMaintenanceTaskXml = Export-ScheduledTask -TaskName $PreviousMaintenanceTaskName -ErrorAction Stop
     }
 
     try {
@@ -590,14 +634,16 @@ function Upgrade-WdacToastInstallation {
 
         if (-not [string]::Equals($PreviousTaskName, $TaskName, [StringComparison]::OrdinalIgnoreCase)) {
             Unregister-ScheduledTask -TaskName $PreviousTaskName -Confirm:$false -ErrorAction Stop
+            Unregister-ScheduledTask -TaskName $PreviousMaintenanceTaskName -Confirm:$false -ErrorAction SilentlyContinue
         }
 
         $IntendedTasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -eq $TaskName)
+        $IntendedMaintenanceTasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -eq $LogMaintenanceTaskName)
         $OldTasks = if ([string]::Equals($PreviousTaskName, $TaskName, [StringComparison]::OrdinalIgnoreCase)) { @() } else {
-            @(Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -eq $PreviousTaskName)
+            @(Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -in @($PreviousTaskName, $PreviousMaintenanceTaskName))
         }
-        if ($IntendedTasks.Count -ne 1 -or $OldTasks.Count -ne 0) {
-            throw "Upgrade verification expected exactly one '$TaskName' task and no '$PreviousTaskName' task; found $($IntendedTasks.Count) and $($OldTasks.Count)."
+        if ($IntendedTasks.Count -ne 1 -or $IntendedMaintenanceTasks.Count -ne 1 -or $OldTasks.Count -ne 0) {
+            throw "Upgrade verification expected notification and maintenance tasks for '$TaskName' and no previous tasks; found $($IntendedTasks.Count), $($IntendedMaintenanceTasks.Count), and $($OldTasks.Count)."
         }
         $Action = @($IntendedTasks[0].Actions) | Select-Object -First 1
         if ($null -eq $Action -or [string]$Action.Arguments -notlike "*${InstalledScript}*" -or [string]$Action.Arguments -notlike "*-WindowStyle $WindowStyle*") {
@@ -617,8 +663,12 @@ function Upgrade-WdacToastInstallation {
         $RollbackFailures = @()
         try {
             Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $LogMaintenanceTaskName -Confirm:$false -ErrorAction SilentlyContinue
             if ($null -ne $PreviousTaskXml) {
                 Register-ScheduledTask -TaskName $PreviousTaskName -Xml $PreviousTaskXml -Force -ErrorAction Stop | Out-Null
+            }
+            if ($null -ne $PreviousMaintenanceTaskXml) {
+                Register-ScheduledTask -TaskName $PreviousMaintenanceTaskName -Xml $PreviousMaintenanceTaskXml -Force -ErrorAction Stop | Out-Null
             }
         }
         catch { $RollbackFailures += "task rollback: $($_.Exception.Message)" }
@@ -639,7 +689,7 @@ function Reset-WdacToastInstallation {
     if ([string]::Equals($PSCommandPath, $InstalledScript, [StringComparison]::OrdinalIgnoreCase)) {
         throw "ResetInstallation must be run from the new deployment copy, not '$InstalledScript'."
     }
-    $TaskNames = @($TaskName)
+    $TaskNames = @($TaskName, $LogMaintenanceTaskName)
     $InstalledConfigurationFile = Join-Path $InstallDirectory 'WDACToast.json'
 
     # Also remove the name recorded by the previous installation so renaming the
@@ -649,6 +699,7 @@ function Reset-WdacToastInstallation {
             $Previous = Get-Content -LiteralPath $InstalledConfigurationFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
             if (-not [string]::IsNullOrWhiteSpace([string]$Previous.TaskName)) {
                 $TaskNames += [string]$Previous.TaskName
+                $TaskNames += "$([string]$Previous.TaskName) Log Maintenance"
             }
         }
         catch {
@@ -675,7 +726,7 @@ function Uninstall-WdacToast {
 
     $Failures = [System.Collections.Generic.List[string]]::new()
     $PreviousInstallations = @(Get-PreviousWdacToastInstallations)
-    $TaskNames = @($TaskName) + @($PreviousInstallations | ForEach-Object TaskName)
+    $TaskNames = @($TaskName, $LogMaintenanceTaskName) + @($PreviousInstallations | ForEach-Object { $_.TaskName; "$($_.TaskName) Log Maintenance" })
     $InstallationDirectories = @($InstallDirectory) + @($PreviousInstallations | ForEach-Object InstallDirectory)
     $InstalledConfigurationFile = Join-Path $InstallDirectory 'WDACToast.json'
 
@@ -686,6 +737,7 @@ function Uninstall-WdacToast {
             $InstalledConfiguration = Get-Content -LiteralPath $InstalledConfigurationFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
             if (-not [string]::IsNullOrWhiteSpace([string]$InstalledConfiguration.TaskName)) {
                 $TaskNames += [string]$InstalledConfiguration.TaskName
+                $TaskNames += "$([string]$InstalledConfiguration.TaskName) Log Maintenance"
             }
         }
         catch {
@@ -1005,6 +1057,13 @@ function Invoke-WdacToast {
     }
     if ($CleanupLogs -and -not $Uninstall) {
         throw 'CleanupLogs is valid only when Uninstall is supplied.'
+    }
+    if ($LogMaintenance) {
+        if ($EventRecordId -ne 0 -or $Upgrade -or $ResetInstallation -or $Uninstall -or $CleanupLogs) {
+            throw 'LogMaintenance cannot be combined with installation, event processing, or uninstall options.'
+        }
+        Invoke-WdacToastLogMaintenance
+        return
     }
     if ($EventRecordId -eq 0) {
         if ($Uninstall) {
