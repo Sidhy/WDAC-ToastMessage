@@ -482,11 +482,20 @@ assert language_key_sets and all(keys == language_key_sets[0] for keys in langua
 assert required_report_keys <= language_key_sets[0]
 assert "ReportDetailsHeading" not in language_key_sets[0] and "ReportCopyBeforeSupport" not in language_key_sets[0]
 localized_report_keys = {
-    "ReportTitle", "ReportExplanation", "ReportExactErrorHeading", "ReportCopyHint",
-    "ReportCopyButton", "ReportCopySuccess", "ReportCopyFailure", "ReportSupportHeading",
-    "ReportSupportInstructions", "ReportSupportStepOne", "ReportSupportStepTwo",
-    "ReportSupportStepThree", "ReportOpenSupport",
+    "ReportTitle", "ReportExplanation", "ReportApplicationName", "ReportApplicationPath",
+    "ReportDescription", "ReportProduct", "ReportVersion", "ReportPublisher",
+    "ReportCallingProcess", "ReportCallerDescription", "ReportCallerProduct",
+    "ReportCallerVersion", "ReportCallerPublisher", "ReportPolicyName", "ReportPolicyId",
+    "ReportPolicyVersion", "ReportStatus", "ReportSigningScenario", "ReportRequestedLevel",
+    "ReportValidatedLevel", "ReportSha256", "ReportSha1", "ReportEventTime",
+    "ReportComputer", "ReportActivityId", "ReportProvider", "ReportRecordId",
+    "ReportExactErrorHeading", "ReportCopyHint", "ReportCopyButton", "ReportCopySuccess",
+    "ReportCopyFailure", "ReportSupportHeading", "ReportSupportInstructions",
+    "ReportSupportStepOne", "ReportSupportStepTwo", "ReportSupportStepThree",
+    "ReportOpenSupport",
 }
+# Add only (locale, key) pairs whose complete label is genuinely language-neutral.
+language_neutral_report_values = set()
 localized_values = {
     language.get("tag"): {node.get("name"): (node.text or "").strip() for node in language.findall("string")}
     for language in localization_root.findall("language")
@@ -494,7 +503,12 @@ localized_values = {
 for tag, strings in localized_values.items():
     assert strings["ReportExactErrorHeading"].count("{0}") == 1, f"{tag} report heading must contain exactly one {{0}} placeholder"
     if tag != "en":
-        assert all(strings[key] != localized_values["en"][key] for key in localized_report_keys), f"{tag} has English report UI"
+        reused_english = {
+            key for key in localized_report_keys
+            if strings[key] == localized_values["en"][key]
+            and (tag, key) not in language_neutral_report_values
+        }
+        assert not reused_english, f"{tag} has English report UI: {sorted(reused_english)}"
 assert "ReportSupportStepThree" in required_strings and "ReportRawEventHeading" not in required_strings
 assert "'ReportSupportStepThree'" in collector and "'ReportRawEventHeading'" not in collector
 assert "local review page" in readme.lower() and "company-wdac-review" in readme
