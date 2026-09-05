@@ -41,7 +41,7 @@ foreach ($ProfileDirectory in $ProfileDirectories) {
             throw "Refusing unexpected cleanup path '$StateDirectory'."
         }
         $RemovalAttempted = (Test-Path -LiteralPath $StateDirectory) -and
-            $PSCmdlet.ShouldProcess($StateDirectory, 'Remove WDACToast logs, diagnostics, and duplicate state')
+            $PSCmdlet.ShouldProcess($StateDirectory, 'Remove WDACToast logs, diagnostics, review reports, and duplicate state')
         if ($RemovalAttempted) {
             Remove-Item -LiteralPath $StateDirectory -Recurse -Force -ErrorAction Stop
         }

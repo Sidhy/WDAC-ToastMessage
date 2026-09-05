@@ -123,7 +123,7 @@ required_collector_fragments = [
 for fragment in required_collector_fragments:
     assert fragment in collector, f"collector is missing {fragment!r}"
 
-assert "[string]$ActivationUri" not in collector
+assert "function New-WdacReviewPage" in collector
 assert "company-wdactoast://copy" not in collector
 assert "Windows.Clipboard" not in collector
 assert "$AlertStateDirectory" not in collector
@@ -143,8 +143,8 @@ assert "Registry::HKEY_USERS" not in collector
 assert not re.search(r"\bGet-ItemPropertyValue\s+-", collector)
 assert "View more details" not in collector
 assert "$Strings.MoreDetails" not in collector
-assert "[string]$DetailsUri" not in collector
-assert "-DetailsUri $DetailsUri" not in collector
+assert "[string]$ReviewPageUri" in collector
+assert "-ReviewPageUri $ReviewPage.ActivationUri" in collector
 assert '"File: $(Limit-Text' not in collector
 assert '"Location: $(Limit-Text' not in collector
 assert '"Requested by: $(Limit-Text' not in collector
@@ -176,11 +176,10 @@ def function_body(name: str) -> str:
 assert "ToUpperInvariant()" not in function_body("Show-ToastNotification")
 identity_body = function_body("Ensure-CurrentUserAppIdentity")
 assert "AppUserModelId\\$AppId" in identity_body
-assert "company-wdactoast" not in identity_body, "the app identity function must not register the legacy protocol"
-assert "URL Protocol" not in identity_body
-assert "shell\\open\\command" not in identity_body
-# Legacy cleanup is permitted, but no code may create a company-wdactoast key.
-assert not re.search(r"New-Item(?:Property)?[^\n]*company-wdactoast", collector, re.IGNORECASE)
+assert "$ReviewProtocol" in identity_body
+assert "URL Protocol" in identity_body
+assert "shell\\open\\command" in identity_body
+
 
 toast_body = function_body("Show-ToastNotification")
 assert toast_body.count("<action ") == 2, "toast XML must define exactly two actions"
@@ -190,7 +189,8 @@ assert toast_body.count('activationType="protocol" afterActivationBehavior="pend
 assert 'content="{1}" arguments="{2}" activationType="protocol" afterActivationBehavior="pendingUpdate"' in toast_body
 assert "(& $Escape $Strings.Dismiss)" in toast_body
 assert "(& $Escape $LocalizedActionLabel)" in toast_body
-assert "(& $Escape $SupportUri)" in toast_body
+assert "(& $Escape $ReviewPageUri)" in toast_body
+assert "(& $Escape $SupportUri)" not in toast_body
 assert "[ValidatePattern('^https://')]" in collector
 assert "company-wdactoast" not in toast_body
 assert "-FileName $FileName" not in function_body("Invoke-WdacToast")
@@ -343,7 +343,7 @@ expected_languages = {"en", "it-IT", "nl-NL", "de-DE", "fr-FR", "uk-UA", "da-DK"
 languages = {node.attrib["tag"]: node for node in localization_root.findall("language")}
 assert set(languages) == expected_languages
 required_strings = {node.attrib["name"] for node in languages["en"].findall("string")}
-assert required_strings == {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "RequestReview", "Dismiss"}
+assert {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "RequestReview", "Dismiss"} <= required_strings
 english_strings = {node.attrib["name"]: node.text for node in languages["en"].findall("string")}
 assert english_strings["BlockedAppPath"] == "Blocked App:"
 assert english_strings["CalledByAppPath"] == "Executed by:"
@@ -359,3 +359,41 @@ assert not (ROOT / "ToastActivator").exists()
 assert "WDACToast.Activator.exe" not in collector
 
 print("Static WDAC collector and task XML checks passed.")
+
+
+# Event-specific, encoded local review report workflow.
+review_body = function_body("New-WdacReviewPage")
+assert "[Net.WebUtility]::HtmlEncode" in review_body
+assert "[guid]::NewGuid().ToString('N')" in review_body
+assert "review-{0}-{1}.html" in review_body
+assert "$ReviewDirectory" in review_body
+assert "$Result.RawEventXml" in review_body and "(& $Encode $Result.RawEventXml)" in review_body
+assert "<details><summary>" in review_body and "<pre" in review_body
+assert "<script" not in review_body.lower()
+assert "(& $Encode $SupportUri)" in review_body
+assert "ReportExactErrorHeading" in review_body and "ReportCopyBeforeSupport" in review_body
+invoke_body = function_body("Invoke-WdacToast")
+assert invoke_body.index("New-WdacReviewPage") < invoke_body.index("Show-ToastNotification")
+assert "$ReviewPage.ActivationUri" in invoke_body
+assert "RawEventXml = $Event.ToXml()" in invoke_body
+maintenance_body = function_body("Invoke-WdacToastLogMaintenance")
+assert "$ReviewDirectory" in maintenance_body and "*.html" in maintenance_body
+assert ".AddMonths(-2)" in maintenance_body
+assert "AppData\\Local\\Company\\WDACToast" in profile_cleanup
+assert "Remove-Item -LiteralPath $StateDirectory -Recurse" in profile_cleanup
+
+localization_root = ET.fromstring(localization)
+required_report_keys = {
+    "ReportTitle", "ReportExplanation", "ReportDetailsHeading", "ReportApplicationName",
+    "ReportApplicationPath", "ReportCallingProcess", "ReportPolicyName", "ReportPolicyId",
+    "ReportPolicyVersion", "ReportStatus", "ReportSigningScenario", "ReportRequestedLevel",
+    "ReportValidatedLevel", "ReportSha256", "ReportSha1", "ReportEventTime", "ReportComputer",
+    "ReportActivityId", "ReportProvider", "ReportRecordId", "ReportExactErrorHeading",
+    "ReportCopyHint", "ReportSupportInstructions", "ReportCopyBeforeSupport",
+    "ReportOpenSupport", "ReportRawEventHeading",
+}
+language_key_sets = [{node.get("name") for node in language.findall("string")} for language in localization_root.findall("language")]
+assert language_key_sets and all(keys == language_key_sets[0] for keys in language_key_sets)
+assert required_report_keys <= language_key_sets[0]
+assert "local review page" in readme.lower() and "company-wdac-review" in readme
+assert "older than two months" in readme and "sensitive" in readme.lower()
