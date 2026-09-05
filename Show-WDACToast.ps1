@@ -63,12 +63,7 @@ param(
     [switch]$CleanupLogs,
 
     # Internal entry point used by the monthly log-maintenance Scheduled Task.
-    [switch]$LogMaintenance,
-
-    # Internal entry point invoked by the current user's registered copy-alert
-    # URI protocol. The strict shape prevents arbitrary command-line input.
-    [ValidatePattern('(?-i)^company-wdactoast://copy\?alert=[a-f0-9]{64}$')]
-    [string]$ActivationUri
+    [switch]$LogMaintenance
 )
 
 Set-StrictMode -Version Latest
@@ -147,41 +142,25 @@ $StateFile = Join-Path $StateDirectory "NotificationState-$CurrentSid.json"
 $InstalledScript = Join-Path $InstallDirectory 'Show-WDACToast.ps1'
 $DefaultLogoPath = Join-Path $InstallDirectory 'MicrosoftDefenderShield.png'
 $LogMaintenanceTaskName = "$TaskName Log Maintenance"
-$ActivationScheme = 'company-wdactoast'
-$AlertStateDirectory = Join-Path $StateDirectory 'Alerts'
 
 function Ensure-CurrentUserAppIdentity {
     $Path = "HKCU:\Software\Classes\AppUserModelId\$AppId"
     New-Item -Path $Path -Force | Out-Null
     New-ItemProperty -Path $Path -Name DisplayName -Value $DisplayName -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $Path -Name ShowInSettings -Value 1 -PropertyType DWord -Force | Out-Null
-    $ProtocolPath = "HKCU:\Software\Classes\$ActivationScheme"
-    New-Item -Path $ProtocolPath -Force | Out-Null
-    Set-Item -LiteralPath $ProtocolPath -Value 'URL:Company WDAC Toast copy alert' -Force
-    New-ItemProperty -Path $ProtocolPath -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
-    $ProtocolCommandPath = Join-Path $ProtocolPath 'shell\open\command'
-    New-Item -Path $ProtocolCommandPath -Force | Out-Null
-    # Keep the protocol host in STA for Windows.Clipboard, and forward the
-    # configured policy so the activated script reloads configuration consistently.
-    $ProtocolCommand = "`"$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -NonInteractive -Sta -WindowStyle Hidden -ExecutionPolicy $ExecutionPolicy -File `"$InstalledScript`" -ActivationUri `"%1`" -ExecutionPolicy $ExecutionPolicy"
-    Set-Item -LiteralPath $ProtocolCommandPath -Value $ProtocolCommand -Force
     Write-WdacToastLog -Message "Ensured AppUserModelID '$AppId' for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
 }
 
 function Remove-CurrentUserAppIdentity {
-    param([string[]]$AppIds = @($AppId), [switch]$RemoveActivationProtocol)
+    param([string[]]$AppIds = @($AppId))
     foreach ($RegisteredAppId in @($AppIds | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
         Remove-Item -LiteralPath "HKCU:\Software\Classes\AppUserModelId\$RegisteredAppId" -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    if ($RemoveActivationProtocol) {
-        Remove-Item -LiteralPath "HKCU:\Software\Classes\$ActivationScheme" -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
 function Initialize-WdacToastStateDirectory {
     New-Item -Path $StateDirectory -ItemType Directory -Force | Out-Null
     New-Item -Path $LogDirectory -ItemType Directory -Force | Out-Null
-    New-Item -Path $AlertStateDirectory -ItemType Directory -Force | Out-Null
 }
 
 function Write-WdacToastLog {
@@ -372,7 +351,7 @@ function Get-WdacToastStrings {
     foreach ($StringNode in @($Selected.string)) {
         $Strings[[string]$StringNode.name] = [string]$StringNode.InnerText
     }
-    $RequiredStrings = @('Title', 'Message', 'UnknownFile', 'NotProvided', 'BlockedAppPath', 'CalledByAppPath', 'BlockedByPolicy', 'VersionFormat', 'RequestReview', 'CopyAlert', 'CopiedTitle', 'CopiedMessage', 'CopyFailedTitle', 'CopyFailedMessage')
+    $RequiredStrings = @('Title', 'Message', 'UnknownFile', 'NotProvided', 'BlockedAppPath', 'CalledByAppPath', 'BlockedByPolicy', 'VersionFormat', 'RequestReview', 'Dismiss')
     foreach ($RequiredString in $RequiredStrings) {
         if (-not $Strings.ContainsKey($RequiredString) -or [string]::IsNullOrWhiteSpace([string]$Strings[$RequiredString])) {
             throw "Language '$($Selected.tag)' is missing required string '$RequiredString' in '$LocalizationFile'."
@@ -405,11 +384,6 @@ function Test-WdacToastConfiguration {
             $Results.Add((Write-ConfigurationCheck -Name 'Application display name' -Passed ($RegisteredDisplayName -eq $DisplayName) -SuccessMessage "DisplayName is '$DisplayName'." -FailureMessage "Expected DisplayName '$DisplayName', found '$RegisteredDisplayName'."))
             $Results.Add((Write-ConfigurationCheck -Name 'Application notification settings' -Passed ($null -ne $RegisteredShowInSettings -and [int]$RegisteredShowInSettings -eq 1) -SuccessMessage 'ShowInSettings is enabled.' -FailureMessage "ShowInSettings should be 1, found '$RegisteredShowInSettings'."))
         }
-        $ProtocolCommandPath = "HKCU:\Software\Classes\$ActivationScheme\shell\open\command"
-        $RegisteredProtocol = Get-Item -LiteralPath $ProtocolCommandPath -ErrorAction SilentlyContinue
-        $ProtocolCommand = if ($null -ne $RegisteredProtocol) { [string]$RegisteredProtocol.GetValue('') } else { '' }
-        $ProtocolIsValid = $ProtocolCommand -like "*${InstalledScript}*" -and $ProtocolCommand -like '*-ActivationUri "%1"*'
-        $Results.Add((Write-ConfigurationCheck -Name 'Copy-alert protocol' -Passed $ProtocolIsValid -SuccessMessage $ProtocolCommand -FailureMessage "The '$ActivationScheme' protocol does not point to '$InstalledScript'."))
     }
 
     $Results.Add((Write-ConfigurationCheck -Name 'Scheduled Task' -Passed ($null -ne $Task) -SuccessMessage "Task '$TaskName' exists." -FailureMessage "Computer-level task '$TaskName' does not exist."))
@@ -751,7 +725,7 @@ function Reset-WdacToastInstallation {
         Unregister-ScheduledTask -TaskName $RegisteredTaskName -Confirm:$false -ErrorAction SilentlyContinue
     }
 
-    Remove-CurrentUserAppIdentity -AppIds $RegisteredAppIds -RemoveActivationProtocol
+    Remove-CurrentUserAppIdentity -AppIds $RegisteredAppIds
 
     Write-WdacToastLog -Message 'Reset the WDAC toast task, installed files, and state for the current profile.'
     Remove-Item -LiteralPath $InstallDirectory -Recurse -Force -ErrorAction SilentlyContinue
@@ -794,8 +768,8 @@ function Uninstall-WdacToast {
     }
 
     try {
-        Remove-CurrentUserAppIdentity -AppIds $RegisteredAppIds -RemoveActivationProtocol
-        Write-WdacToastLog -Message 'Removed the current user AppUserModelID and copy-alert protocol registration.'
+        Remove-CurrentUserAppIdentity -AppIds $RegisteredAppIds
+        Write-WdacToastLog -Message 'Removed the current user AppUserModelID registration.'
     }
     catch {
         $Failures.Add("Failed to remove current-user notification activation registration: $($_.Exception.Message)")
@@ -1016,75 +990,6 @@ function Get-StableHash {
     }
 }
 
-function Save-WdacAlertState {
-    param(
-        [Parameter(Mandatory)][string]$Token,
-        [Parameter(Mandatory)][System.Collections.IDictionary]$Alert
-    )
-    if ($Token -notmatch '^[a-f0-9]{64}$') { throw 'Alert token is invalid.' }
-    Initialize-WdacToastStateDirectory
-    $Path = Join-Path $AlertStateDirectory "$Token.json"
-    $TemporaryPath = "$Path.$PID.tmp"
-    try {
-        $Alert | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $TemporaryPath -Encoding UTF8
-        Move-Item -LiteralPath $TemporaryPath -Destination $Path -Force
-    }
-    finally { Remove-Item -LiteralPath $TemporaryPath -Force -ErrorAction SilentlyContinue }
-}
-
-function Show-WdacReplacementNotification {
-    param(
-        [Parameter(Mandatory)]$Alert,
-        [Parameter(Mandatory)][string]$Title,
-        [Parameter(Mandatory)][string]$Message
-    )
-    [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
-    [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
-    $Escape = { param([string]$Value) [System.Security.SecurityElement]::Escape($Value) }
-    $ReviewLabel = if ($Alert.ActionLabel -eq 'Request Review') { $Alert.Strings.RequestReview } else { $Alert.ActionLabel }
-    # The replacement keeps the HTTPS Review action available and pending so
-    # the user can return to the alert after opening the review page.
-    $Xml = '<toast><visual><binding template="ToastGeneric" lang="{0}"><text>{1}</text><text>{2}</text></binding></visual><actions><action content="{3}" arguments="{4}" activationType="protocol" afterActivationBehavior="pendingUpdate"/></actions></toast>' -f
-        (& $Escape $Alert.Language), (& $Escape $Title), (& $Escape $Message), (& $Escape $ReviewLabel), (& $Escape $Alert.SupportUri)
-    $Document = [Windows.Data.Xml.Dom.XmlDocument]::new()
-    $Document.LoadXml($Xml)
-    $Toast = [Windows.UI.Notifications.ToastNotification]::new($Document)
-    $Toast.Tag = [string]$Alert.Tag
-    $Toast.Group = [string]$Alert.Group
-    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier([string]$Alert.AppId).Show($Toast)
-}
-
-function Invoke-WdacToastActivation {
-    param([Parameter(Mandatory)][string]$UriText)
-
-    if (-not [Environment]::UserInteractive) { throw 'Toast activation requires the current interactive user session.' }
-    if ($UriText -notmatch '(?-i)^company-wdactoast://copy\?alert=([a-f0-9]{64})$') {
-        throw 'Only a copy activation URI with a valid alert token is supported.'
-    }
-    $AlertToken = $Matches[1]
-    $AlertPath = Join-Path $AlertStateDirectory ("{0}.json" -f $AlertToken)
-    if (-not (Test-Path -LiteralPath $AlertPath -PathType Leaf)) { throw 'The selected alert is no longer available.' }
-    $Alert = Get-Content -LiteralPath $AlertPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    if ($Alert.AppId -ne $AppId -or [string]$Alert.Tag -notmatch '^wdac-[0-9]+$' -or $Alert.Group -ne 'wdac-blocks') {
-        throw 'The saved alert identity is invalid.'
-    }
-    try {
-        $Lines = foreach ($Property in $Alert.CopyFields.PSObject.Properties) { '{0}: {1}' -f $Property.Name, $Property.Value }
-        $ClipboardText = $Lines -join [Environment]::NewLine
-        Add-Type -AssemblyName PresentationCore
-        [Windows.Clipboard]::SetText($ClipboardText)
-        Show-WdacReplacementNotification -Alert $Alert -Title $Alert.Strings.CopiedTitle -Message $Alert.Strings.CopiedMessage
-        Write-WdacToastLog -Message "Copied saved alert '$AlertToken' to the current interactive user's clipboard and replaced its notification."
-    }
-    catch {
-        $ClipboardFailure = $_
-        # Always release a notification held by pendingUpdate, even when clipboard access fails.
-        try { Show-WdacReplacementNotification -Alert $Alert -Title $Alert.Strings.CopyFailedTitle -Message $Alert.Strings.CopyFailedMessage }
-        catch { Write-WdacToastLog -Level ERROR -Message "Clipboard and failure replacement both failed: $($_.Exception.Message)" }
-        throw "Could not copy the alert to the clipboard: $($ClipboardFailure.Exception.Message)"
-    }
-}
-
 function Show-ToastNotification {
     param(
         [Parameter(Mandatory)][string]$Title,
@@ -1092,7 +997,6 @@ function Show-ToastNotification {
         [Parameter(Mandatory)][System.Collections.IDictionary]$Details,
         [Parameter(Mandatory)][string]$Language,
         [Parameter(Mandatory)][System.Collections.IDictionary]$Strings,
-        [Parameter(Mandatory)][string]$AlertToken,
         [Parameter(Mandatory)][string]$Tag,
         [Parameter(Mandatory)][string]$Group
     )
@@ -1124,11 +1028,8 @@ function Show-ToastNotification {
     }
 
     $LocalizedActionLabel = if ($ActionLabel -eq 'Request Review') { $Strings.RequestReview } else { $ActionLabel }
-    # There is no redundant Dismiss action: Windows supplies the standard close
-    # button. Both explicit actions keep the toast available for further review.
-    $CopyUri = "$ActivationScheme`://copy?alert=$AlertToken"
-    $ActionXml = '<actions><action content="{0}" arguments="{1}" activationType="protocol" afterActivationBehavior="pendingUpdate"/><action content="{2}" arguments="{3}" activationType="protocol" afterActivationBehavior="pendingUpdate"/></actions>' -f
-        (& $Escape $Strings.CopyAlert), (& $Escape $CopyUri), (& $Escape $LocalizedActionLabel), (& $Escape $SupportUri)
+    $ActionXml = '<actions><action content="{0}" arguments="dismiss" activationType="system"/><action content="{1}" arguments="{2}" activationType="protocol" afterActivationBehavior="pendingUpdate"/></actions>' -f
+        (& $Escape $Strings.Dismiss), (& $Escape $LocalizedActionLabel), (& $Escape $SupportUri)
 
     $ImageXml = ''
     if (-not [string]::IsNullOrWhiteSpace($LogoPath)) {
@@ -1188,13 +1089,6 @@ function Invoke-WdacToast {
     }
     if ($CleanupLogs -and -not $Uninstall) {
         throw 'CleanupLogs is valid only when Uninstall is supplied.'
-    }
-    if (-not [string]::IsNullOrWhiteSpace($ActivationUri)) {
-        if ($EventRecordId -ne 0 -or $Upgrade -or $ResetInstallation -or $Uninstall -or $CleanupLogs -or $LogMaintenance) {
-            throw 'ActivationUri cannot be combined with another entry point.'
-        }
-        Invoke-WdacToastActivation -UriText $ActivationUri
-        return
     }
     if ($LogMaintenance) {
         if ($EventRecordId -ne 0 -or $Upgrade -or $ResetInstallation -or $Uninstall -or $CleanupLogs) {
@@ -1332,24 +1226,6 @@ function Invoke-WdacToast {
     }
     $ToastTag = "wdac-$($Event.RecordId)"
     $ToastGroup = 'wdac-blocks'
-    $AlertToken = Get-StableHash -Text ("{0}|{1}|{2}" -f $CurrentSid, $Event.RecordId, [guid]::NewGuid().ToString('N'))
-    $AlertState = [ordered]@{
-        AppId = $AppId
-        Tag = $ToastTag
-        Group = $ToastGroup
-        Language = $Localization.Language
-        SupportUri = $SupportUri
-        ActionLabel = $ActionLabel
-        Strings = $Localization.Strings
-        CopyFields = [ordered]@{
-            $Localization.Strings.BlockedAppPath = $FilePath
-            $Localization.Strings.CalledByAppPath = $ProcessPath
-            $Localization.Strings.BlockedByPolicy = $PolicyDisplay
-            'Event record' = [string]$Event.RecordId
-            'Time' = $Event.TimeCreated.ToString('o')
-        }
-    }
-    Save-WdacAlertState -Token $AlertToken -Alert $AlertState
     Write-WdacToastLog -Message "Submitting toast to the Windows notification platform with AppId '$AppId'."
     Show-ToastNotification `
         -Title $Localization.Strings.Title `
@@ -1357,7 +1233,6 @@ function Invoke-WdacToast {
         -Details $ToastDetails `
         -Language $Localization.Language `
         -Strings $Localization.Strings `
-        -AlertToken $AlertToken `
         -Tag $ToastTag `
         -Group $ToastGroup
     Write-WdacToastLog -Message 'The Windows notification platform accepted the toast. Windows can still suppress its presentation because of Do Not Disturb/Focus Assist or per-app notification settings.'

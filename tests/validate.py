@@ -118,19 +118,18 @@ required_collector_fragments = [
     "$Toast.Group = $Group",
     "$ToastTag = \"wdac-$($Event.RecordId)\"",
     "$ToastGroup = 'wdac-blocks'",
-    "function Invoke-WdacToastActivation",
-    "[string]$ActivationUri",
-    "company-wdactoast://copy\\?alert=([a-f0-9]{64})",
-    "[Windows.Clipboard]::SetText($ClipboardText)",
-    "function Show-WdacReplacementNotification",
-    "CopyFailedTitle",
-    "'URL Protocol'",
-    "shell\\open\\command",
     "Remove-CurrentUserAppIdentity",
 ]
 for fragment in required_collector_fragments:
     assert fragment in collector, f"collector is missing {fragment!r}"
 
+assert "[string]$ActivationUri" not in collector
+assert "company-wdactoast://copy" not in collector
+assert "Windows.Clipboard" not in collector
+assert "$AlertStateDirectory" not in collector
+assert "function Save-WdacAlertState" not in collector
+assert "function Invoke-WdacToastActivation" not in collector
+assert "function Show-WdacReplacementNotification" not in collector
 assert "$env\\:ProgramData" not in collector
 assert "$Node.'#text'" not in collector
 assert "S-1-5-18" not in collector
@@ -175,33 +174,25 @@ def function_body(name: str) -> str:
     return collector[start : next_function if next_function != -1 else len(collector)]
 
 assert "ToUpperInvariant()" not in function_body("Show-ToastNotification")
-protocol_identity_body = function_body("Ensure-CurrentUserAppIdentity")
-protocol_command = next(
-    line for line in protocol_identity_body.splitlines() if "$ProtocolCommand =" in line
-)
-assert "-Sta -WindowStyle Hidden -ExecutionPolicy $ExecutionPolicy -File" in protocol_command, (
-    "the protocol host must use the configured execution policy and remain STA"
-)
-assert ' -ActivationUri `"%1`" -ExecutionPolicy $ExecutionPolicy' in protocol_command, (
-    "the activation entry point must receive the configured execution policy"
-)
-assert "-ExecutionPolicy AllSigned" not in protocol_command, (
-    "the protocol command must not override the configured execution policy"
-)
+identity_body = function_body("Ensure-CurrentUserAppIdentity")
+assert "AppUserModelId\\$AppId" in identity_body
+assert "company-wdactoast" not in identity_body, "the app identity function must not register the legacy protocol"
+assert "URL Protocol" not in identity_body
+assert "shell\\open\\command" not in identity_body
+# Legacy cleanup is permitted, but no code may create a company-wdactoast key.
+assert not re.search(r"New-Item(?:Property)?[^\n]*company-wdactoast", collector, re.IGNORECASE)
+
 toast_body = function_body("Show-ToastNotification")
-assert toast_body.count('activationType="protocol" afterActivationBehavior="pendingUpdate"') == 2
-assert 'activationType="background"' not in toast_body
-assert 'activationType="system"' not in toast_body
-assert '$Strings.Dismiss' not in toast_body
-assert 'arguments="{3}" activationType="protocol" afterActivationBehavior="pendingUpdate"' in toast_body
-replacement_body = function_body("Show-WdacReplacementNotification")
-assert "CreateToastNotifier([string]$Alert.AppId).Show($Toast)" in replacement_body
-assert "$Toast.Tag = [string]$Alert.Tag" in replacement_body
-assert "$Toast.Group = [string]$Alert.Group" in replacement_body
-activation_body = function_body("Invoke-WdacToastActivation")
-assert "Add-Type -AssemblyName PresentationCore" in activation_body
-assert "Show-WdacReplacementNotification" in activation_body
-assert "Only a copy activation URI with a valid alert token is supported" in activation_body
+assert toast_body.count("<action ") == 2, "toast XML must define exactly two actions"
+assert toast_body.count('activationType="system"') == 1
+assert 'content="{0}" arguments="dismiss" activationType="system"' in toast_body
+assert toast_body.count('activationType="protocol" afterActivationBehavior="pendingUpdate"') == 1
+assert 'content="{1}" arguments="{2}" activationType="protocol" afterActivationBehavior="pendingUpdate"' in toast_body
+assert "(& $Escape $Strings.Dismiss)" in toast_body
+assert "(& $Escape $LocalizedActionLabel)" in toast_body
+assert "(& $Escape $SupportUri)" in toast_body
+assert "[ValidatePattern('^https://')]" in collector
+assert "company-wdactoast" not in toast_body
 assert "-FileName $FileName" not in function_body("Invoke-WdacToast")
 assert "$ProcessPath -replace '^.*[\\\\/]', ''" in function_body("Invoke-WdacToast")
 assert "('{0} {1}' -f $Localization.Strings.BlockedAppPath, $FileName) = $FilePath" in function_body("Invoke-WdacToast")
@@ -295,7 +286,6 @@ assert "Registry::HKEY_USERS" not in profile_cleanup
 assert "Remove-Item -LiteralPath $ProfileDirectory" not in profile_cleanup
 assert "Cleanup-WDACToastAllProfiles.ps1" in readme
 assert "SYSTEM profile, **not** every" in readme
-assert "protocol command points to a missing file" in readme
 assert "other users' unloaded HKCU" in readme
 
 match = re.search(r'\$TaskXml = @"\n(.*?)\n"@', collector, re.DOTALL)
@@ -353,7 +343,7 @@ expected_languages = {"en", "it-IT", "nl-NL", "de-DE", "fr-FR", "uk-UA", "da-DK"
 languages = {node.attrib["tag"]: node for node in localization_root.findall("language")}
 assert set(languages) == expected_languages
 required_strings = {node.attrib["name"] for node in languages["en"].findall("string")}
-assert required_strings == {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "RequestReview", "CopyAlert", "CopiedTitle", "CopiedMessage", "CopyFailedTitle", "CopyFailedMessage"}
+assert required_strings == {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "RequestReview", "Dismiss"}
 english_strings = {node.attrib["name"]: node.text for node in languages["en"].findall("string")}
 assert english_strings["BlockedAppPath"] == "Blocked App:"
 assert english_strings["CalledByAppPath"] == "Executed by:"
