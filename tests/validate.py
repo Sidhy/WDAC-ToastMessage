@@ -361,9 +361,14 @@ assert "ProgramData" not in parsed_configuration["LogoPath"]
 
 localization_root = ET.fromstring(localization)
 assert localization_root.attrib["fallbackLanguage"] == "en"
-expected_languages = {"en", "it-IT", "nl-NL", "de-DE", "fr-FR", "uk-UA", "da-DK", "es-ES", "es-AR", "pt-PT", "pt-BR"}
+expected_languages = {
+    "en", "it-IT", "nl-NL", "de-DE", "fr-FR", "uk-UA", "da-DK", "es-ES", "es-AR", "pt-PT", "pt-BR",
+    "ko-KR", "ja-JP", "hu-HU", "cs-CZ", "ar-MA", "ro-RO",
+}
+requested_languages = {"ko-KR", "ja-JP", "hu-HU", "cs-CZ", "ar-MA", "ro-RO"}
 languages = {node.attrib["tag"]: node for node in localization_root.findall("language")}
 assert set(languages) == expected_languages
+assert requested_languages <= set(languages), "one or more requested locales are missing"
 required_strings = {node.attrib["name"] for node in languages["en"].findall("string")}
 assert {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "RequestReview", "Dismiss"} <= required_strings
 english_strings = {node.attrib["name"]: node.text for node in languages["en"].findall("string")}
