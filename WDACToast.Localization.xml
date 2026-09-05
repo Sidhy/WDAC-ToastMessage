@@ -2,7 +2,7 @@
 <localization fallbackLanguage="en">
   <language tag="en">
     <string name="Title">Application blocked by security policy</string>
-    <string name="Message">Your organization blocked this application because it is not approved for use or may present a security risk. Some legitimate applications and Windows tools can also be blocked because they are commonly misused by attackers. This does not mean the application is malware.</string>
+    <string name="Message">Your organization blocked this application because it is not approved or may pose a security risk. This does not mean it is malware.</string>
     <string name="UnknownFile">Unknown file</string>
     <string name="NotProvided">Not provided</string>
     <string name="BlockedAppPath">Blocked App:</string>
@@ -52,7 +52,7 @@
   </language>
   <language tag="it-IT">
     <string name="Title">Applicazione bloccata dai criteri di sicurezza</string>
-    <string name="Message">La tua organizzazione ha bloccato questa applicazione perché non è approvata per l'uso o potrebbe rappresentare un rischio per la sicurezza. Anche alcune applicazioni legittime e alcuni strumenti di Windows possono essere bloccati perché vengono comunemente utilizzati in modo improprio dagli autori di attacchi. Ciò non significa che l'applicazione sia malware.</string>
+    <string name="Message">La tua organizzazione ha bloccato questa applicazione perché non è approvata o potrebbe rappresentare un rischio per la sicurezza. Ciò non significa che sia malware.</string>
     <string name="UnknownFile">File sconosciuto</string>
     <string name="NotProvided">Non specificato</string>
     <string name="BlockedAppPath">App bloccata:</string>
@@ -102,7 +102,7 @@
   </language>
   <language tag="nl-NL">
     <string name="Title">Toepassing geblokkeerd door beveiligingsbeleid</string>
-    <string name="Message">Uw organisatie heeft deze toepassing geblokkeerd omdat deze niet is goedgekeurd voor gebruik of een beveiligingsrisico kan vormen. Sommige legitieme toepassingen en Windows-hulpprogramma's kunnen ook worden geblokkeerd omdat aanvallers er vaak misbruik van maken. Dit betekent niet dat de toepassing malware is.</string>
+    <string name="Message">Uw organisatie heeft deze toepassing geblokkeerd omdat deze niet is goedgekeurd of een beveiligingsrisico kan vormen. Dit betekent niet dat de toepassing malware is.</string>
     <string name="UnknownFile">Onbekend bestand</string>
     <string name="NotProvided">Niet opgegeven</string>
     <string name="BlockedAppPath">Geblokkeerde app:</string>
@@ -152,7 +152,7 @@
   </language>
   <language tag="de-DE">
     <string name="Title">Anwendung durch Sicherheitsrichtlinie blockiert</string>
-    <string name="Message">Ihre Organisation hat diese Anwendung blockiert, weil sie nicht zur Verwendung genehmigt ist oder ein Sicherheitsrisiko darstellen könnte. Auch einige legitime Anwendungen und Windows-Tools können blockiert werden, weil sie häufig von Angreifern missbraucht werden. Dies bedeutet nicht, dass die Anwendung Schadsoftware ist.</string>
+    <string name="Message">Ihre Organisation hat diese Anwendung blockiert, weil sie nicht genehmigt ist oder ein Sicherheitsrisiko darstellen könnte. Das bedeutet nicht, dass sie Schadsoftware ist.</string>
     <string name="UnknownFile">Unbekannte Datei</string>
     <string name="NotProvided">Nicht angegeben</string>
     <string name="BlockedAppPath">Blockierte App:</string>
@@ -202,7 +202,7 @@
   </language>
   <language tag="fr-FR">
     <string name="Title">Application bloquée par la stratégie de sécurité</string>
-    <string name="Message">Votre organisation a bloqué cette application, car son utilisation n’est pas approuvée ou elle peut présenter un risque de sécurité. Certaines applications légitimes et certains outils Windows peuvent également être bloqués, car ils sont couramment détournés par des attaquants. Cela ne signifie pas que l’application est un logiciel malveillant.</string>
+    <string name="Message">Votre organisation a bloqué cette application, car elle n’est pas approuvée ou peut présenter un risque de sécurité. Cela ne signifie pas qu’elle est malveillante.</string>
     <string name="UnknownFile">Fichier inconnu</string>
     <string name="NotProvided">Non indiqué</string>
     <string name="BlockedAppPath">Application bloquée :</string>
@@ -252,7 +252,7 @@
   </language>
   <language tag="uk-UA">
     <string name="Title">Програму заблоковано політикою безпеки</string>
-    <string name="Message">Ваша організація заблокувала цю програму, оскільки її не схвалено для використання або вона може становити загрозу безпеці. Деякі легітимні програми та засоби Windows також можуть блокуватися, оскільки зловмисники часто використовують їх не за призначенням. Це не означає, що програма є шкідливим програмним забезпеченням.</string>
+    <string name="Message">Ваша організація заблокувала цю програму, оскільки її не схвалено або вона може становити загрозу безпеці. Це не означає, що програма є шкідливою.</string>
     <string name="UnknownFile">Невідомий файл</string>
     <string name="NotProvided">Не вказано</string>
     <string name="BlockedAppPath">Заблокована програма:</string>
@@ -302,7 +302,7 @@
   </language>
   <language tag="da-DK">
     <string name="Title">Program blokeret af sikkerhedspolitik</string>
-    <string name="Message">Din organisation har blokeret dette program, fordi det ikke er godkendt til brug eller kan udgøre en sikkerhedsrisiko. Nogle legitime programmer og Windows-værktøjer kan også blive blokeret, fordi de ofte misbruges af angribere. Det betyder ikke, at programmet er malware.</string>
+    <string name="Message">Din organisation har blokeret dette program, fordi det ikke er godkendt eller kan udgøre en sikkerhedsrisiko. Det betyder ikke, at programmet er malware.</string>
     <string name="UnknownFile">Ukendt fil</string>
     <string name="NotProvided">Ikke angivet</string>
     <string name="BlockedAppPath">Blokeret app:</string>
@@ -352,7 +352,7 @@
   </language>
   <language tag="es-ES">
     <string name="Title">Aplicación bloqueada por la directiva de seguridad</string>
-    <string name="Message">Su organización ha bloqueado esta aplicación porque no está aprobada para su uso o puede suponer un riesgo de seguridad. Algunas aplicaciones legítimas y herramientas de Windows también pueden bloquearse porque los atacantes suelen hacer un uso indebido de ellas. Esto no significa que la aplicación sea malware.</string>
+    <string name="Message">Su organización ha bloqueado esta aplicación porque no está aprobada o puede suponer un riesgo de seguridad. Esto no significa que sea malware.</string>
     <string name="UnknownFile">Archivo desconocido</string>
     <string name="NotProvided">No especificado</string>
     <string name="BlockedAppPath">Aplicación bloqueada:</string>
@@ -402,7 +402,7 @@
   </language>
   <language tag="es-AR">
     <string name="Title">Aplicación bloqueada por la directiva de seguridad</string>
-    <string name="Message">Tu organización bloqueó esta aplicación porque no está aprobada para su uso o puede representar un riesgo de seguridad. Algunas aplicaciones legítimas y herramientas de Windows también pueden bloquearse porque los atacantes suelen usarlas de forma indebida. Esto no significa que la aplicación sea malware.</string>
+    <string name="Message">Tu organización bloqueó esta aplicación porque no está aprobada o puede representar un riesgo de seguridad. Esto no significa que sea malware.</string>
     <string name="UnknownFile">Archivo desconocido</string>
     <string name="NotProvided">No especificado</string>
     <string name="BlockedAppPath">Aplicación bloqueada:</string>
@@ -452,7 +452,7 @@
   </language>
   <language tag="pt-PT">
     <string name="Title">Aplicação bloqueada pela política de segurança</string>
-    <string name="Message">A sua organização bloqueou esta aplicação porque não está aprovada para utilização ou pode representar um risco de segurança. Algumas aplicações legítimas e ferramentas do Windows também podem ser bloqueadas porque são frequentemente utilizadas de forma indevida por atacantes. Isto não significa que a aplicação seja software malicioso.</string>
+    <string name="Message">A sua organização bloqueou esta aplicação porque não está aprovada ou pode representar um risco de segurança. Isto não significa que seja software malicioso.</string>
     <string name="UnknownFile">Ficheiro desconhecido</string>
     <string name="NotProvided">Não indicado</string>
     <string name="BlockedAppPath">Aplicação bloqueada:</string>
@@ -502,7 +502,7 @@
   </language>
   <language tag="pt-BR">
     <string name="Title">Aplicativo bloqueado pela política de segurança</string>
-    <string name="Message">Sua organização bloqueou este aplicativo porque ele não foi aprovado para uso ou pode representar um risco à segurança. Alguns aplicativos legítimos e ferramentas do Windows também podem ser bloqueados porque são frequentemente usados de forma indevida por invasores. Isso não significa que o aplicativo seja malware.</string>
+    <string name="Message">Sua organização bloqueou este aplicativo porque ele não foi aprovado ou pode representar um risco à segurança. Isso não significa que seja malware.</string>
     <string name="UnknownFile">Arquivo desconhecido</string>
     <string name="NotProvided">Não informado</string>
     <string name="BlockedAppPath">Aplicativo bloqueado:</string>
@@ -552,7 +552,7 @@
   </language>
   <language tag="ko-KR">
     <string name="Title">보안 정책에 의해 애플리케이션이 차단됨</string>
-    <string name="Message">조직에서 사용이 승인되지 않았거나 보안 위험을 초래할 수 있어 이 애플리케이션을 차단했습니다. 공격자가 흔히 악용한다는 이유로 정상적인 애플리케이션과 Windows 도구도 차단될 수 있습니다. 그렇다고 해서 해당 애플리케이션이 맬웨어라는 의미는 아닙니다.</string>
+    <string name="Message">조직에서 사용을 승인하지 않았거나 보안 위험이 있을 수 있어 이 애플리케이션을 차단했습니다. 이는 해당 애플리케이션이 맬웨어라는 의미는 아닙니다.</string>
     <string name="UnknownFile">알 수 없는 파일</string>
     <string name="NotProvided">제공되지 않음</string>
     <string name="BlockedAppPath">차단된 앱:</string>
@@ -602,7 +602,7 @@
   </language>
   <language tag="ja-JP">
     <string name="Title">セキュリティ ポリシーによりアプリケーションがブロックされました</string>
-    <string name="Message">このアプリケーションは、使用が承認されていないか、セキュリティ上のリスクをもたらす可能性があるため、組織によってブロックされました。正規のアプリケーションや Windows ツールでも、攻撃者に悪用されることが多いためブロックされる場合があります。これは、そのアプリケーションがマルウェアであることを意味するものではありません。</string>
+    <string name="Message">このアプリは、承認されていないか、セキュリティ上のリスクがある可能性があるため、組織によってブロックされました。マルウェアであるとは限りません。</string>
     <string name="UnknownFile">不明なファイル</string>
     <string name="NotProvided">情報なし</string>
     <string name="BlockedAppPath">ブロックされたアプリ:</string>
@@ -652,7 +652,7 @@
   </language>
   <language tag="hu-HU">
     <string name="Title">Az alkalmazást a biztonsági szabályzat letiltotta</string>
-    <string name="Message">A szervezet letiltotta ezt az alkalmazást, mert használata nincs jóváhagyva, vagy biztonsági kockázatot jelenthet. Egyes megbízható alkalmazások és Windows-eszközök is letilthatók, mert a támadók gyakran visszaélnek velük. Ez nem jelenti azt, hogy az alkalmazás kártevő.</string>
+    <string name="Message">A szervezet letiltotta ezt az alkalmazást, mert nincs jóváhagyva, vagy biztonsági kockázatot jelenthet. Ez nem jelenti azt, hogy az alkalmazás kártevő.</string>
     <string name="UnknownFile">Ismeretlen fájl</string>
     <string name="NotProvided">Nincs megadva</string>
     <string name="BlockedAppPath">Letiltott alkalmazás:</string>
@@ -702,7 +702,7 @@
   </language>
   <language tag="cs-CZ">
     <string name="Title">Aplikace byla zablokována zásadami zabezpečení</string>
-    <string name="Message">Vaše organizace tuto aplikaci zablokovala, protože není schválena k použití nebo může představovat bezpečnostní riziko. Zablokovány mohou být i některé legitimní aplikace a nástroje systému Windows, protože je útočníci často zneužívají. Neznamená to, že tato aplikace je malware.</string>
+    <string name="Message">Vaše organizace tuto aplikaci zablokovala, protože není schválena nebo může představovat bezpečnostní riziko. Neznamená to, že je tato aplikace malware.</string>
     <string name="UnknownFile">Neznámý soubor</string>
     <string name="NotProvided">Neuvedeno</string>
     <string name="BlockedAppPath">Zablokovaná aplikace:</string>
@@ -752,7 +752,7 @@
   </language>
   <language tag="ar-MA">
     <string name="Title">تم حظر التطبيق بواسطة نهج الأمان</string>
-    <string name="Message">حظرت مؤسستك هذا التطبيق لأنه غير معتمد للاستخدام أو لأنه قد يشكل خطراً أمنياً. قد تُحظر أيضاً بعض التطبيقات المشروعة وأدوات Windows لأن المهاجمين يسيئون استخدامها بشكل شائع. ولا يعني ذلك أن التطبيق برنامج ضار.</string>
+    <string name="Message">حظرت مؤسستك هذا التطبيق لأنه غير معتمد أو قد يشكل خطراً أمنياً. ولا يعني ذلك أنه برنامج ضار.</string>
     <string name="UnknownFile">ملف غير معروف</string>
     <string name="NotProvided">غير متوفر</string>
     <string name="BlockedAppPath">التطبيق المحظور:</string>
@@ -802,7 +802,7 @@
   </language>
   <language tag="ro-RO">
     <string name="Title">Aplicație blocată de politica de securitate</string>
-    <string name="Message">Organizația dvs. a blocat această aplicație deoarece nu este aprobată pentru utilizare sau poate prezenta un risc de securitate. Unele aplicații legitime și instrumente Windows pot fi, de asemenea, blocate deoarece sunt utilizate frecvent în mod abuziv de atacatori. Acest lucru nu înseamnă că aplicația este malware.</string>
+    <string name="Message">Organizația dvs. a blocat această aplicație deoarece nu este aprobată sau poate prezenta un risc de securitate. Acest lucru nu înseamnă că aplicația este malware.</string>
     <string name="UnknownFile">Fișier necunoscut</string>
     <string name="NotProvided">Nu este furnizat</string>
     <string name="BlockedAppPath">Aplicație blocată:</string>

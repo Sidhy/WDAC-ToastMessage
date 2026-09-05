@@ -377,7 +377,11 @@ approved_english_explanation = (
     "Some legitimate applications and Windows tools can also be blocked because they are commonly misused by attackers. "
     "This does not mean the application is malware."
 )
-assert english_strings["Message"] == approved_english_explanation
+approved_english_toast = (
+    "Your organization blocked this application because it is not approved or may pose a security risk. "
+    "This does not mean it is malware."
+)
+assert english_strings["Message"] == approved_english_toast
 assert english_strings["ReportExplanation"] == approved_english_explanation
 assert english_strings["BlockedAppPath"] == "Blocked App:"
 assert english_strings["CalledByAppPath"] == "Executed by:"
@@ -387,12 +391,18 @@ for tag, language in languages.items():
     values = {node.attrib["name"]: (node.text or "").strip() for node in strings}
     assert {node.attrib["name"] for node in strings} == required_strings, f"{tag} has incomplete localization"
     assert all((node.text or "").strip() for node in strings), f"{tag} has an empty localized string"
-    assert values["Message"] and values["ReportExplanation"], f"{tag} has an empty explanation"
-    assert values["Message"] == values["ReportExplanation"], f"{tag} has inconsistent toast and report explanations"
+    assert values["Message"], f"{tag} has an empty toast message"
+    assert values["ReportExplanation"], f"{tag} has an empty report explanation"
+    assert len(values["Message"]) <= 200, f"{tag} has an overly long toast message"
+    assert len(values["Message"].split()) <= 30, f"{tag} toast message has too many words"
+    assert values["Message"] != values["ReportExplanation"], f"{tag} toast message is not concise"
     if tag != "en":
-        assert values["Message"] != approved_english_explanation, f"{tag} does not have a locale-specific explanation"
-    detail_labels = [next(node.text for node in strings if node.attrib["name"] == name) for name in ("BlockedAppPath", "CalledByAppPath", "BlockedByPolicy")]
+        assert values["Message"] != approved_english_toast, f"{tag} does not have a locale-specific toast message"
+    assert len(values["Title"]) <= 60 and len(values["Title"].split()) <= 8, f"{tag} has an overly long toast title"
+    detail_labels = [values[name] for name in ("BlockedAppPath", "CalledByAppPath", "BlockedByPolicy")]
     assert all(label.endswith(":") and len(label) <= 24 for label in detail_labels), f"{tag} has an overly long detail label"
+    action_labels = [values[name] for name in ("RequestReview", "Dismiss")]
+    assert all(len(label) <= 24 and len(label.split()) <= 3 for label in action_labels), f"{tag} has an overly long action label"
 
 assert not (ROOT / "ToastActivator").exists()
 assert "WDACToast.Activator.exe" not in collector
