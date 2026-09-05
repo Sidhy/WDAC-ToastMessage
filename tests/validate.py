@@ -1,4 +1,5 @@
 from pathlib import Path
+from html.parser import HTMLParser
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -106,11 +107,11 @@ required_collector_fragments = [
     "$Localization.Strings.BlockedByPolicy",
     "$PolicyVersion = Get-FirstEventValue",
     "PolicyVersion = $PolicyVersion",
-    '<text hint-maxLines="1">{2}</text>',
-    '<text hint-maxLines="2">{3}</text>',
-    '<group><subgroup>{4}</subgroup></group>',
+    '<text hint-maxLines="1">{3}</text>',
+    '<text hint-maxLines="2">{4}</text>',
+    '<group><subgroup>{5}</subgroup></group>',
     'hint-style="body" hint-wrap="true" hint-maxLines="4"',
-    'template="ToastGeneric" lang="{0}"',
+    'template="ToastGeneric" lang="{1}"',
     '(& $Escape $LocalizedActionLabel)',
     "Write-Error -ErrorRecord $Failure",
     'activationType="protocol" afterActivationBehavior="pendingUpdate"',
@@ -183,16 +184,37 @@ assert "shell\\open\\command" in identity_body
 
 toast_body = function_body("Show-ToastNotification")
 assert toast_body.count("<action ") == 2, "toast XML must define exactly two actions"
-assert toast_body.count('activationType="system"') == 1
 assert 'content="{0}" arguments="dismiss" activationType="system"' in toast_body
-assert toast_body.count('activationType="protocol" afterActivationBehavior="pendingUpdate"') == 1
 assert 'content="{1}" arguments="{2}" activationType="protocol" afterActivationBehavior="pendingUpdate"' in toast_body
 assert "(& $Escape $Strings.Dismiss)" in toast_body
 assert "(& $Escape $LocalizedActionLabel)" in toast_body
-assert "(& $Escape $ReviewPageUri)" in toast_body
+assert "$EscapedReviewPageUri = & $Escape $ReviewPageUri" in toast_body
 assert "(& $Escape $SupportUri)" not in toast_body
 assert "[ValidatePattern('^https://')]" in collector
 assert "company-wdactoast" not in toast_body
+
+# Materialize the XML-producing format strings to validate the routing contract
+# represented by the generated toast, rather than checking isolated fragments.
+review_uri = "company-wdac-review://open/314/0123456789abcdef0123456789abcdef"
+action_template = re.search(r"\$ActionXml = '([^\n]+)' -f", toast_body).group(1)
+action_xml = action_template.format("Dismiss", "Request Review", review_uri.replace("&", "&amp;"))
+toast_template = re.search(r"\$ToastXml = '([^\n]+)' -f", toast_body).group(1)
+toast_xml = toast_template.format(
+    review_uri.replace("&", "&amp;"), "en-US", "", "Blocked app", "Review report available", "", action_xml
+)
+toast = ET.fromstring(toast_xml)
+assert toast.get("launch") == review_uri, "the toast body must target the Review Report page"
+assert toast.get("activationType") == "protocol", "toast body activation must use the report protocol"
+assert toast.get("afterActivationBehavior") == "pendingUpdate"
+actions = toast.findall("./actions/action")
+request_review = next(action for action in actions if action.get("content") == "Request Review")
+assert request_review.get("arguments") == review_uri, "Request Review must retain the report protocol URI"
+assert request_review.get("activationType") == "protocol"
+assert request_review.get("afterActivationBehavior") == "pendingUpdate"
+system_actions = [action for action in actions if action.get("activationType") == "system"]
+assert len(system_actions) == 1, "Dismiss must be the sole system-activation action"
+assert system_actions[0].get("content") == "Dismiss" and system_actions[0].get("arguments") == "dismiss"
+
 assert "-FileName $FileName" not in function_body("Invoke-WdacToast")
 assert "$ProcessPath -replace '^.*[\\\\/]', ''" in function_body("Invoke-WdacToast")
 assert "('{0} {1}' -f $Localization.Strings.BlockedAppPath, $FileName) = $FilePath" in function_body("Invoke-WdacToast")
@@ -372,6 +394,26 @@ assert "<details><summary>" in review_body and "<pre" in review_body
 assert "<script" not in review_body.lower()
 assert "(& $Encode $SupportUri)" in review_body
 assert "ReportExactErrorHeading" in review_body and "ReportCopyBeforeSupport" in review_body
+report_template = re.search(r"\$Html = @'\n(.*?)\n'@ -f", review_body, re.DOTALL).group(1)
+support_uri = "https://support.example.test/wdac-review?source=report&amp;kind=request"
+report_html = report_template.format(*(["report value"] * 11), support_uri, "Open Support Portal", "Raw event", "event XML")
+
+class ReportLinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.links = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self.links.append(dict(attrs))
+
+
+report_parser = ReportLinkParser()
+report_parser.feed(report_html)
+support_links = [link for link in report_parser.links if link.get("class") == "button"]
+assert len(support_links) == 1 and support_links[0].get("href") == support_uri.replace("&amp;", "&"), (
+    "the Review Report page must open the configured Support Portal"
+)
 invoke_body = function_body("Invoke-WdacToast")
 assert invoke_body.index("New-WdacReviewPage") < invoke_body.index("Show-ToastNotification")
 assert "$ReviewPage.ActivationUri" in invoke_body
