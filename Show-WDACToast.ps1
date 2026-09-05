@@ -379,7 +379,7 @@ function Get-WdacToastStrings {
     foreach ($StringNode in @($Selected.string)) {
         $Strings[[string]$StringNode.name] = [string]$StringNode.InnerText
     }
-    $RequiredStrings = @('Title', 'Message', 'UnknownFile', 'NotProvided', 'BlockedAppPath', 'CalledByAppPath', 'BlockedByPolicy', 'VersionFormat', 'RequestReview', 'Dismiss', 'ReportTitle', 'ReportExplanation', 'ReportDetailsHeading', 'ReportApplicationName', 'ReportApplicationPath', 'ReportDescription', 'ReportProduct', 'ReportVersion', 'ReportPublisher', 'ReportCallingProcess', 'ReportCallerDescription', 'ReportCallerProduct', 'ReportCallerVersion', 'ReportCallerPublisher', 'ReportPolicyName', 'ReportPolicyId', 'ReportPolicyVersion', 'ReportStatus', 'ReportSigningScenario', 'ReportRequestedLevel', 'ReportValidatedLevel', 'ReportSha256', 'ReportSha1', 'ReportEventTime', 'ReportComputer', 'ReportActivityId', 'ReportProvider', 'ReportRecordId', 'ReportExactErrorHeading', 'ReportCopyHint', 'ReportSupportHeading', 'ReportSupportInstructions', 'ReportCopyBeforeSupport', 'ReportOpenSupport', 'ReportRawEventHeading')
+    $RequiredStrings = @('Title', 'Message', 'UnknownFile', 'NotProvided', 'BlockedAppPath', 'CalledByAppPath', 'BlockedByPolicy', 'VersionFormat', 'RequestReview', 'Dismiss', 'ReportTitle', 'ReportExplanation', 'ReportApplicationName', 'ReportApplicationPath', 'ReportDescription', 'ReportProduct', 'ReportVersion', 'ReportPublisher', 'ReportCallingProcess', 'ReportCallerDescription', 'ReportCallerProduct', 'ReportCallerVersion', 'ReportCallerPublisher', 'ReportPolicyName', 'ReportPolicyId', 'ReportPolicyVersion', 'ReportStatus', 'ReportSigningScenario', 'ReportRequestedLevel', 'ReportValidatedLevel', 'ReportSha256', 'ReportSha1', 'ReportEventTime', 'ReportComputer', 'ReportActivityId', 'ReportProvider', 'ReportRecordId', 'ReportExactErrorHeading', 'ReportCopyHint', 'ReportCopyButton', 'ReportCopySuccess', 'ReportCopyFailure', 'ReportSupportHeading', 'ReportSupportInstructions', 'ReportSupportStepOne', 'ReportSupportStepTwo', 'ReportOpenSupport', 'ReportRawEventHeading')
     foreach ($RequiredString in $RequiredStrings) {
         if (-not $Strings.ContainsKey($RequiredString) -or [string]::IsNullOrWhiteSpace([string]$Strings[$RequiredString])) {
             throw "Language '$($Selected.tag)' is missing required string '$RequiredString' in '$LocalizationFile'."
@@ -1056,26 +1056,25 @@ function New-WdacReviewPage {
         $Strings.ReportActivityId = $Result.ActivityId; $Strings.ReportProvider = $Result.ProviderName
         $Strings.ReportRecordId = $Result.EventRecordId
     }
-    $TableRows = foreach ($Entry in $Rows.GetEnumerator()) {
-        '<tr><th scope="row">{0}</th><td>{1}</td></tr>' -f (& $Encode $Entry.Key), (& $Encode $Entry.Value)
-    }
     $ErrorText = foreach ($Entry in $Rows.GetEnumerator()) { '{0}: {1}' -f $Entry.Key, $(if ([string]::IsNullOrWhiteSpace([string]$Entry.Value)) { $Strings.NotProvided } else { [string]$Entry.Value }) }
     $Nonce = [guid]::NewGuid().ToString('N')
     $FileName = 'review-{0}-{1}.html' -f ([long]$Result.EventRecordId), $Nonce
     $Path = Join-Path $ReviewDirectory $FileName
     $Html = @'
 <!doctype html><html lang="{0}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{1}</title>
-<style>body{{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#f4f6f8;color:#17202a}}main{{max-width:960px;margin:auto;padding:clamp(1rem,4vw,3rem)}}section{{background:#fff;border-radius:.6rem;padding:1.25rem;margin:1rem 0;box-shadow:0 1px 4px #0002}}table{{border-collapse:collapse;width:100%}}th,td{{text-align:left;vertical-align:top;padding:.55rem;border-bottom:1px solid #ddd;overflow-wrap:anywhere}}th{{width:35%}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f3f3;padding:1rem}}.button{{display:inline-block;background:#075ea8;color:#fff;padding:.75rem 1rem;border-radius:.3rem;text-decoration:none;font-weight:600}}@media(max-width:600px){{th,td{{display:block;width:auto}}th{{border-bottom:0;padding-bottom:0}}}}</style></head><body><main>
-<h1>{1}</h1><p>{2}</p><section><h2>{3}</h2><table>{4}</table></section>
-<section><h2>{5}</h2><p>{6}</p><pre aria-label="{5}" tabindex="0">{7}</pre></section>
-<section><h2>{8}</h2><p>{9}</p><p><strong>{10}</strong></p><a class="button" href="{11}" rel="noopener noreferrer">{12}</a></section>
-<details><summary>{13}</summary><pre>{14}</pre></details></main></body></html>
+<style>body{{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#f4f6f8;color:#17202a}}main{{max-width:960px;margin:auto;padding:clamp(1rem,4vw,3rem)}}section{{background:#fff;border-radius:.6rem;padding:1.25rem;margin:1rem 0;box-shadow:0 1px 4px #0002}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f3f3;padding:1rem;user-select:text}}.button{{display:inline-block;border:0;background:#075ea8;color:#fff;padding:.75rem 1rem;border-radius:.3rem;text-decoration:none;font:inherit;font-weight:600;cursor:pointer}}.copy-row{{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}}#copy-status{{font-weight:600}}</style></head><body><main>
+<h1>{1}</h1><p>{2}</p>
+<section><h2>{3}</h2><p>{4}</p><div class="copy-row"><button class="button" id="copy-details" type="button">{5}</button><span id="copy-status" role="status" aria-live="polite"></span><span id="copy-success" hidden>{15}</span><span id="copy-failure" hidden>{16}</span></div><pre id="error-details" aria-label="{3}" tabindex="0">{6}</pre></section>
+<section><h2>{7}</h2><p>{8}</p><ol><li>{9}</li><li>{10}</li></ol><a class="button" href="{11}" target="_blank" rel="noopener noreferrer">{12}</a></section>
+<details><summary>{13}</summary><pre>{14}</pre></details></main>
+<script>(function(){{'use strict';var button=document.getElementById('copy-details'),details=document.getElementById('error-details'),status=document.getElementById('copy-status'),success=document.getElementById('copy-success'),failure=document.getElementById('copy-failure');function fallback(text){{var area=document.createElement('textarea');area.value=text;area.setAttribute('readonly','');area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();area.setSelectionRange(0,area.value.length);var copied=false;try{{copied=document.execCommand('copy')}}catch(e){{copied=false}}finally{{document.body.removeChild(area)}}return copied}}function show(copied){{status.textContent=(copied?success:failure).textContent;if(!copied){{var selection=window.getSelection(),range=document.createRange();range.selectNodeContents(details);selection.removeAllRanges();selection.addRange(range);details.focus()}}}}button.addEventListener('click',function(){{var text=details.textContent;if(navigator.clipboard&&navigator.clipboard.writeText){{navigator.clipboard.writeText(text).then(function(){{show(true)}},function(){{show(fallback(text))}})}}else{{show(fallback(text))}}}})}}());</script></body></html>
 '@ -f (& $Encode $Result.Language), (& $Encode $Strings.ReportTitle), (& $Encode $Strings.ReportExplanation),
-        (& $Encode $Strings.ReportDetailsHeading), ($TableRows -join ''), (& $Encode $Strings.ReportExactErrorHeading),
-        (& $Encode $Strings.ReportCopyHint), (& $Encode ($ErrorText -join [Environment]::NewLine)),
-        (& $Encode $Strings.ReportSupportHeading), (& $Encode $Strings.ReportSupportInstructions),
-        (& $Encode $Strings.ReportCopyBeforeSupport), (& $Encode $SupportUri), (& $Encode $Strings.ReportOpenSupport),
-        (& $Encode $Strings.ReportRawEventHeading), (& $Encode $Result.RawEventXml)
+        (& $Encode $Strings.ReportExactErrorHeading), (& $Encode $Strings.ReportCopyHint), (& $Encode $Strings.ReportCopyButton),
+        (& $Encode ($ErrorText -join [Environment]::NewLine)), (& $Encode $Strings.ReportSupportHeading),
+        (& $Encode $Strings.ReportSupportInstructions), (& $Encode $Strings.ReportSupportStepOne),
+        (& $Encode $Strings.ReportSupportStepTwo), (& $Encode $SupportUri), (& $Encode $Strings.ReportOpenSupport),
+        (& $Encode $Strings.ReportRawEventHeading), (& $Encode $Result.RawEventXml),
+        (& $Encode $Strings.ReportCopySuccess), (& $Encode $Strings.ReportCopyFailure)
     Set-Content -LiteralPath $Path -Value $Html -Encoding UTF8
     return [pscustomobject]@{ Path = $Path; ActivationUri = "$ReviewProtocol`://open/$([long]$Result.EventRecordId)/$Nonce" }
 }
