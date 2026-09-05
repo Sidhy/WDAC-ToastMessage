@@ -179,9 +179,15 @@ protocol_identity_body = function_body("Ensure-CurrentUserAppIdentity")
 protocol_command = next(
     line for line in protocol_identity_body.splitlines() if "$ProtocolCommand =" in line
 )
-assert protocol_command.count("-ExecutionPolicy $ExecutionPolicy") == 2
-assert "-ExecutionPolicy AllSigned" not in protocol_command
-assert "-Sta" in protocol_command
+assert "-Sta -WindowStyle Hidden -ExecutionPolicy $ExecutionPolicy -File" in protocol_command, (
+    "the protocol host must use the configured execution policy and remain STA"
+)
+assert ' -ActivationUri `"%1`" -ExecutionPolicy $ExecutionPolicy' in protocol_command, (
+    "the activation entry point must receive the configured execution policy"
+)
+assert "-ExecutionPolicy AllSigned" not in protocol_command, (
+    "the protocol command must not override the configured execution policy"
+)
 toast_body = function_body("Show-ToastNotification")
 assert toast_body.count('activationType="protocol" afterActivationBehavior="pendingUpdate"') == 2
 assert 'activationType="background"' not in toast_body

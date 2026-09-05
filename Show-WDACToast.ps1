@@ -161,6 +161,8 @@ function Ensure-CurrentUserAppIdentity {
     New-ItemProperty -Path $ProtocolPath -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
     $ProtocolCommandPath = Join-Path $ProtocolPath 'shell\open\command'
     New-Item -Path $ProtocolCommandPath -Force | Out-Null
+    # Keep the protocol host in STA for Windows.Clipboard, and forward the
+    # configured policy so the activated script reloads configuration consistently.
     $ProtocolCommand = "`"$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -NonInteractive -Sta -WindowStyle Hidden -ExecutionPolicy $ExecutionPolicy -File `"$InstalledScript`" -ActivationUri `"%1`" -ExecutionPolicy $ExecutionPolicy"
     Set-Item -LiteralPath $ProtocolCommandPath -Value $ProtocolCommand -Force
     Write-WdacToastLog -Message "Ensured AppUserModelID '$AppId' for $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)."
