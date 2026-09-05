@@ -369,11 +369,19 @@ requested_languages = {"ko-KR", "ja-JP", "hu-HU", "cs-CZ", "ar-MA", "ro-RO"}
 languages = {node.attrib["tag"]: node for node in localization_root.findall("language")}
 assert set(languages) == expected_languages
 assert requested_languages <= set(languages), "one or more requested locales are missing"
+expected_report_titles = {
+    "en": "What Happened?", "it-IT": "Che cosa è successo?", "nl-NL": "Wat is er gebeurd?",
+    "de-DE": "Was ist passiert?", "fr-FR": "Que s’est-il passé ?", "uk-UA": "Що сталося?",
+    "da-DK": "Hvad skete der?", "es-ES": "¿Qué ha ocurrido?", "es-AR": "¿Qué pasó?",
+    "pt-PT": "O que aconteceu?", "pt-BR": "O que aconteceu?", "ko-KR": "무슨 일이 발생했나요?",
+    "ja-JP": "何が起きたのですか？", "hu-HU": "Mi történt?", "cs-CZ": "Co se stalo?",
+    "ar-MA": "ماذا حدث؟", "ro-RO": "Ce s-a întâmplat?",
+}
 required_strings = {node.attrib["name"] for node in languages["en"].findall("string")}
 assert {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "RequestReview", "Dismiss"} <= required_strings
 english_strings = {node.attrib["name"]: node.text for node in languages["en"].findall("string")}
 approved_english_explanation = (
-    "Your organization blocked this application because it is not approved for use or may present a security risk. "
+    "Your organization blocked this application ({0}) because it is not approved for use or may present a security risk. "
     "Some legitimate applications and Windows tools can also be blocked because they are commonly misused by attackers. "
     "This does not mean the application is malware."
 )
@@ -382,6 +390,7 @@ approved_english_toast = (
     "This does not mean it is malware."
 )
 assert english_strings["Message"] == approved_english_toast
+assert english_strings["ReportTitle"] == "What Happened?"
 assert english_strings["ReportExplanation"] == approved_english_explanation
 assert english_strings["BlockedAppPath"] == "Blocked App:"
 assert english_strings["CalledByAppPath"] == "Executed by:"
@@ -393,6 +402,8 @@ for tag, language in languages.items():
     assert all((node.text or "").strip() for node in strings), f"{tag} has an empty localized string"
     assert values["Message"], f"{tag} has an empty toast message"
     assert values["ReportExplanation"], f"{tag} has an empty report explanation"
+    assert values["ReportTitle"] == expected_report_titles[tag], f"{tag} has an unexpected report title"
+    assert values["ReportExplanation"].count("{0}") == 1, f"{tag} report explanation must include the filename placeholder"
     assert len(values["Message"]) <= 200, f"{tag} has an overly long toast message"
     assert len(values["Message"].split()) <= 30, f"{tag} toast message has too many words"
     assert values["Message"] != values["ReportExplanation"], f"{tag} toast message is not concise"
@@ -430,12 +441,13 @@ assert "ReportExactErrorHeading" in review_body and "ReportCopyButton" in review
 assert "$ErrorHeading = $Strings.ReportExactErrorHeading -f $BlockedFileName" in review_body
 assert "(& $Encode $ErrorHeading)" in review_body
 assert "$BlockedFileName = $Strings.UnknownFile" in review_body
+assert "$ReportExplanation = $Strings.ReportExplanation -f $BlockedFileName" in review_body
 assert all(key in review_body for key in ("ReportSupportStepOne", "ReportSupportStepTwo", "ReportSupportStepThree"))
 for value in ("$Strings.ReportCopySuccess", "$Strings.ReportCopyFailure", "$Strings.ReportSupportStepOne", "$Strings.ReportSupportStepTwo", "$Strings.ReportSupportStepThree"):
     assert f"(& $Encode {value})" in review_body
 report_template = re.search(r"\$Html = @'\n(.*?)\n'@ -f", review_body, re.DOTALL).group(1)
 assert report_template.count("<li>") == 3
-assert report_template.index("<h1>{1}</h1><p>{2}</p>") < report_template.index("<h2>{3}</h2><p>{4}</p>")
+assert report_template.index("<section><h1>{1}</h1><p>{2}</p></section>") < report_template.index("<h2>{3}</h2><p>{4}</p>")
 assert report_template.index("<li>{7}</li>") < report_template.index('href="{8}"')
 assert report_template.index('href="{8}"') < report_template.index("<h2>{10}</h2>")
 support_uri = "https://support.example.test/wdac-review?source=report&amp;kind=request"

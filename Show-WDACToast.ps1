@@ -1064,6 +1064,7 @@ function New-WdacReviewPage {
     if ([string]::IsNullOrWhiteSpace($BlockedFileName)) {
         $BlockedFileName = $Strings.UnknownFile
     }
+    $ReportExplanation = $Strings.ReportExplanation -f $BlockedFileName
     $ErrorHeading = $Strings.ReportExactErrorHeading -f $BlockedFileName
     $Nonce = [guid]::NewGuid().ToString('N')
     $FileName = 'review-{0}-{1}.html' -f ([long]$Result.EventRecordId), $Nonce
@@ -1071,11 +1072,11 @@ function New-WdacReviewPage {
     $Html = @'
 <!doctype html><html lang="{0}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{1}</title>
 <style>body{{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#f4f6f8;color:#17202a}}main{{max-width:960px;margin:auto;padding:clamp(1rem,4vw,3rem)}}section{{background:#fff;border-radius:.6rem;padding:1.25rem;margin:1rem 0;box-shadow:0 1px 4px #0002}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f3f3;padding:1rem;user-select:text}}.button{{display:inline-block;border:0;background:#075ea8;color:#fff;padding:.75rem 1rem;border-radius:.3rem;text-decoration:none;font:inherit;font-weight:600;cursor:pointer}}.copy-row{{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}}#copy-status{{font-weight:600}}</style></head><body><main>
-<h1>{1}</h1><p>{2}</p>
+<section><h1>{1}</h1><p>{2}</p></section>
 <section><h2>{3}</h2><p>{4}</p><ol><li>{5}</li><li>{6}</li><li>{7}</li></ol><a class="button" href="{8}" target="_blank" rel="noopener noreferrer">{9}</a></section>
 <section><h2>{10}</h2><p>{11}</p><div class="copy-row"><button class="button" id="copy-details" type="button">{12}</button><span id="copy-status" role="status" aria-live="polite"></span><span id="copy-success" hidden>{14}</span><span id="copy-failure" hidden>{15}</span></div><pre id="error-details" aria-label="{10}" tabindex="0">{13}</pre></section></main>
 <script>(function(){{'use strict';var button=document.getElementById('copy-details'),details=document.getElementById('error-details'),status=document.getElementById('copy-status'),success=document.getElementById('copy-success'),failure=document.getElementById('copy-failure');function fallback(text){{var area=document.createElement('textarea');area.value=text;area.setAttribute('readonly','');area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();area.setSelectionRange(0,area.value.length);var copied=false;try{{copied=document.execCommand('copy')}}catch(e){{copied=false}}finally{{document.body.removeChild(area)}}return copied}}function show(copied){{status.textContent=(copied?success:failure).textContent;if(!copied){{var selection=window.getSelection(),range=document.createRange();range.selectNodeContents(details);selection.removeAllRanges();selection.addRange(range);details.focus()}}}}button.addEventListener('click',function(){{var text=details.textContent;if(navigator.clipboard&&navigator.clipboard.writeText){{navigator.clipboard.writeText(text).then(function(){{show(true)}},function(){{show(fallback(text))}})}}else{{show(fallback(text))}}}})}}());</script></body></html>
-'@ -f (& $Encode $Result.Language), (& $Encode $Strings.ReportTitle), (& $Encode $Strings.ReportExplanation),
+'@ -f (& $Encode $Result.Language), (& $Encode $Strings.ReportTitle), (& $Encode $ReportExplanation),
         (& $Encode $Strings.ReportSupportHeading), (& $Encode $Strings.ReportSupportInstructions),
         (& $Encode $Strings.ReportSupportStepOne), (& $Encode $Strings.ReportSupportStepTwo),
         (& $Encode $Strings.ReportSupportStepThree), (& $Encode $SupportUri), (& $Encode $Strings.ReportOpenSupport),
