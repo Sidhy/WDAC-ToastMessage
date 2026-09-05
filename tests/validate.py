@@ -377,6 +377,23 @@ expected_report_titles = {
     "ja-JP": "何が起きたのですか？", "hu-HU": "Mi történt?", "cs-CZ": "Co se stalo?",
     "ar-MA": "ماذا حدث؟", "ro-RO": "Ce s-a întâmplat?",
 }
+# These reviewed values intentionally pin wording where formality or regional
+# usage is significant; update them only after the corresponding resource has
+# completed the independent localization review documented in docs/.
+reviewed_locale_expectations = {
+    ("it-IT", "Message"): "La sua organizzazione ha bloccato questa applicazione perché non è approvata o potrebbe rappresentare un rischio per la sicurezza. Ciò non significa che sia malware.",
+    ("it-IT", "ReportSupportStepTwo"): "Faccia clic su Apri portale di supporto, crei un ticket e incolli nel ticket i dettagli copiati.",
+    ("it-IT", "ReportSupportStepThree"): "Spieghi perché ha bisogno di questa applicazione.",
+    ("es-ES", "ReportSupportStepOne"): "Copie el error detallado con el botón Copiar, o seleccione y copie manualmente el error detallado.",
+    ("es-AR", "ReportCopyFailure"): "No se pudo copiar. Los detalles del error están seleccionados; cópialos manualmente.",
+    ("es-AR", "ReportSupportStepOne"): "Copiá el error detallado con el botón Copiar, o seleccioná y copiá manualmente el error detallado.",
+    ("pt-PT", "UnknownFile"): "Ficheiro desconhecido",
+    ("pt-PT", "Dismiss"): "Fechar",
+    ("pt-PT", "ReportRecordId"): "ID do registo",
+    ("pt-BR", "UnknownFile"): "Arquivo desconhecido",
+    ("pt-BR", "Dismiss"): "Fechar",
+    ("pt-BR", "ReportRecordId"): "ID do registro",
+}
 required_strings = {node.attrib["name"] for node in languages["en"].findall("string")}
 assert {"Title", "Message", "UnknownFile", "NotProvided", "BlockedAppPath", "CalledByAppPath", "BlockedByPolicy", "VersionFormat", "RequestReview", "Dismiss"} <= required_strings
 english_strings = {node.attrib["name"]: node.text for node in languages["en"].findall("string")}
@@ -414,6 +431,9 @@ for tag, language in languages.items():
     assert all(label.endswith(":") and len(label) <= 24 for label in detail_labels), f"{tag} has an overly long detail label"
     action_labels = [values[name] for name in ("RequestReview", "Dismiss")]
     assert all(len(label) <= 24 and len(label.split()) <= 3 for label in action_labels), f"{tag} has an overly long action label"
+for (tag, key), expected in reviewed_locale_expectations.items():
+    actual = {node.attrib["name"]: node.text for node in languages[tag].findall("string")}[key]
+    assert actual == expected, f"{tag} has unexpected reviewed wording for {key}"
 
 assert not (ROOT / "ToastActivator").exists()
 assert "WDACToast.Activator.exe" not in collector

@@ -52,7 +52,7 @@
   </language>
   <language tag="it-IT">
     <string name="Title">Applicazione bloccata dai criteri di sicurezza</string>
-    <string name="Message">La tua organizzazione ha bloccato questa applicazione perché non è approvata o potrebbe rappresentare un rischio per la sicurezza. Ciò non significa che sia malware.</string>
+    <string name="Message">La sua organizzazione ha bloccato questa applicazione perché non è approvata o potrebbe rappresentare un rischio per la sicurezza. Ciò non significa che sia malware.</string>
     <string name="UnknownFile">File sconosciuto</string>
     <string name="NotProvided">Non specificato</string>
     <string name="BlockedAppPath">App bloccata:</string>
@@ -62,7 +62,7 @@
     <string name="RequestReview">Richiedi revisione</string>
     <string name="Dismiss">Ignora</string>
     <string name="ReportTitle">Che cosa è successo?</string>
-    <string name="ReportExplanation">La tua organizzazione ha bloccato questa applicazione ({0}) perché non è approvata per l'uso o potrebbe rappresentare un rischio per la sicurezza. Anche alcune applicazioni legittime e alcuni strumenti di Windows possono essere bloccati perché vengono comunemente utilizzati in modo improprio dagli autori di attacchi. Ciò non significa che l'applicazione sia malware.</string>
+    <string name="ReportExplanation">La sua organizzazione ha bloccato questa applicazione ({0}) perché non è approvata per l'uso o potrebbe rappresentare un rischio per la sicurezza. Anche alcune applicazioni legittime e alcuni strumenti di Windows possono essere bloccati perché vengono comunemente utilizzati in modo improprio dagli autori di attacchi. Ciò non significa che l'applicazione sia malware.</string>
     <string name="ReportApplicationName">Nome dell’applicazione bloccata</string>
     <string name="ReportApplicationPath">Percorso dell’applicazione bloccata</string>
     <string name="ReportDescription">Descrizione</string>
@@ -91,14 +91,14 @@
     <string name="ReportExactErrorHeading">Dettagli dell’applicazione bloccata: {0}</string>
     <string name="ReportCopyButton">Copia</string>
     <string name="ReportCopySuccess">Dettagli dell’errore copiati.</string>
-    <string name="ReportCopyFailure">Copia non riuscita. I dettagli dell’errore sono selezionati; copiali manualmente.</string>
-    <string name="ReportSupportStepOne">Copia i dettagli dell’errore usando il pulsante Copia oppure seleziona e copia manualmente i dettagli dell’errore.</string>
-    <string name="ReportSupportStepTwo">Fai clic su Apri portale di supporto, crea un ticket e incolla nel ticket i dettagli copiati.</string>
-    <string name="ReportCopyHint">Usa Copia qui sotto. Se la copia non riesce, seleziona e copia manualmente questo testo.</string>
+    <string name="ReportCopyFailure">Copia non riuscita. I dettagli dell’errore sono selezionati; li copi manualmente.</string>
+    <string name="ReportSupportStepOne">Copi i dettagli dell’errore usando il pulsante Copia oppure selezioni e copi manualmente i dettagli dell’errore.</string>
+    <string name="ReportSupportStepTwo">Faccia clic su Apri portale di supporto, crei un ticket e incolli nel ticket i dettagli copiati.</string>
+    <string name="ReportCopyHint">Usi Copia qui sotto. Se la copia non riesce, selezioni e copi manualmente questo testo.</string>
     <string name="ReportSupportHeading">Cosa devo fare?</string>
-    <string name="ReportSupportInstructions">Se ritieni che questo blocco sia un errore e hai bisogno di questa applicazione, segui queste istruzioni per aprire un ticket di supporto.</string>
+    <string name="ReportSupportInstructions">Se ritiene che questo blocco sia un errore e ha bisogno di questa applicazione, segua queste istruzioni per aprire un ticket di supporto.</string>
     <string name="ReportOpenSupport">Apri portale di supporto</string>
-    <string name="ReportSupportStepThree">Spiega perché hai bisogno di questa applicazione.</string>
+    <string name="ReportSupportStepThree">Spieghi perché ha bisogno di questa applicazione.</string>
   </language>
   <language tag="nl-NL">
     <string name="Title">Toepassing geblokkeerd door beveiligingsbeleid</string>
@@ -441,7 +441,7 @@
     <string name="ReportExactErrorHeading">Detalles de la aplicación bloqueada: {0}</string>
     <string name="ReportCopyButton">Copiar</string>
     <string name="ReportCopySuccess">Se copiaron los detalles del error.</string>
-    <string name="ReportCopyFailure">No se pudo copiar. Los detalles del error están seleccionados; copialos manualmente.</string>
+    <string name="ReportCopyFailure">No se pudo copiar. Los detalles del error están seleccionados; cópialos manualmente.</string>
     <string name="ReportSupportStepOne">Copiá el error detallado con el botón Copiar, o seleccioná y copiá manualmente el error detallado.</string>
     <string name="ReportSupportStepTwo">Hacé clic en Abrir portal de soporte, creá un ticket y pegá los detalles copiados en el ticket.</string>
     <string name="ReportCopyHint">Usá Copiar a continuación. Si la copia falla, seleccioná y copiá este texto manualmente.</string>
@@ -460,7 +460,7 @@
     <string name="BlockedByPolicy">Política WDAC:</string>
     <string name="VersionFormat">{0} (versão {1})</string>
     <string name="RequestReview">Pedir revisão</string>
-    <string name="Dismiss">Dispensar</string>
+    <string name="Dismiss">Fechar</string>
     <string name="ReportTitle">O que aconteceu?</string>
     <string name="ReportExplanation">A sua organização bloqueou esta aplicação ({0}) porque não está aprovada para utilização ou pode representar um risco de segurança. Algumas aplicações legítimas e ferramentas do Windows também podem ser bloqueadas porque são frequentemente utilizadas de forma indevida por atacantes. Isto não significa que a aplicação seja software malicioso.</string>
     <string name="ReportApplicationName">Nome da aplicação bloqueada</string>
@@ -510,7 +510,7 @@
     <string name="BlockedByPolicy">Política WDAC:</string>
     <string name="VersionFormat">{0} (versão {1})</string>
     <string name="RequestReview">Solicitar revisão</string>
-    <string name="Dismiss">Dispensar</string>
+    <string name="Dismiss">Fechar</string>
     <string name="ReportTitle">O que aconteceu?</string>
     <string name="ReportExplanation">Sua organização bloqueou este aplicativo ({0}) porque ele não foi aprovado para uso ou pode representar um risco à segurança. Alguns aplicativos legítimos e ferramentas do Windows também podem ser bloqueados porque são frequentemente usados de forma indevida por invasores. Isso não significa que o aplicativo seja malware.</string>
     <string name="ReportApplicationName">Nome do aplicativo bloqueado</string>
