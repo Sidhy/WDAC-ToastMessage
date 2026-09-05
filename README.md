@@ -65,10 +65,13 @@ font and text shaping.
 The supplied resources include English (`en`), Italian (`it-IT`), Dutch
 (`nl-NL`), German (`de-DE`), French (`fr-FR`), Ukrainian (`uk-UA`), Danish
 (`da-DK`), Spanish for Spain and Argentina (`es-ES`, `es-AR`), and Portuguese
-for Portugal and Brazil (`pt-PT`, `pt-BR`). Keep the English entry because it is
-the configured fallback. Every language entry must contain all string names
-present in the English entry. A custom `ActionLabel` remains unchanged;
-the default **Request Review** label is localized with the rest of the toast.
+for Portugal and Brazil (`pt-PT`, `pt-BR`), Korean for South Korea (`ko-KR`),
+Japanese for Japan (`ja-JP`), Hungarian for Hungary (`hu-HU`), Czech for
+Czechia (`cs-CZ`), Arabic for Morocco (`ar-MA`), and Romanian for Romania
+(`ro-RO`). Keep the English entry because it is the configured fallback. Every
+language entry must contain all string names present in the English entry. A
+custom `ActionLabel` remains unchanged; the default **Request Review** label is
+localized with the rest of the toast.
 
 The source JSON is copied only when it exists. Removing it from a later upgrade
 package does **not** delete a JSON file already installed in Program Files; use
