@@ -401,8 +401,8 @@ assert "[Net.WebUtility]::HtmlEncode" in review_body
 assert "[guid]::NewGuid().ToString('N')" in review_body
 assert "review-{0}-{1}.html" in review_body
 assert "$ReviewDirectory" in review_body
-assert "$Result.RawEventXml" in review_body and "(& $Encode $Result.RawEventXml)" in review_body
-assert "<details><summary>" in review_body and "<pre" in review_body
+assert "$Result.RawEventXml" not in review_body and "ReportRawEventHeading" not in review_body
+assert "<details><summary>" not in review_body and "<pre" in review_body
 assert "<table" not in review_body.lower() and "$TableRows" not in review_body
 assert "navigator.clipboard.writeText" in review_body
 assert "document.execCommand('copy')" in review_body
@@ -412,15 +412,22 @@ assert 'role="status"' in review_body and 'aria-live="polite"' in review_body
 assert '<button class="button" id="copy-details" type="button">' in review_body
 assert "(& $Encode $SupportUri)" in review_body
 assert "ReportExactErrorHeading" in review_body and "ReportCopyButton" in review_body
-assert "ReportSupportStepOne" in review_body and "ReportSupportStepTwo" in review_body
-for value in ("$Strings.ReportCopySuccess", "$Strings.ReportCopyFailure", "$Strings.ReportSupportStepOne", "$Strings.ReportSupportStepTwo"):
+assert all(key in review_body for key in ("ReportSupportStepOne", "ReportSupportStepTwo", "ReportSupportStepThree"))
+for value in ("$Strings.ReportCopySuccess", "$Strings.ReportCopyFailure", "$Strings.ReportSupportStepOne", "$Strings.ReportSupportStepTwo", "$Strings.ReportSupportStepThree"):
     assert f"(& $Encode {value})" in review_body
 report_template = re.search(r"\$Html = @'\n(.*?)\n'@ -f", review_body, re.DOTALL).group(1)
+assert report_template.count("<li>") == 3
+assert report_template.index("<h1>{1}</h1><p>{2}</p>") < report_template.index("<h2>{3}</h2><p>{4}</p>")
+assert report_template.index("<li>{7}</li>") < report_template.index('href="{8}"')
+assert report_template.index('href="{8}"') < report_template.index("<h2>{10}</h2>")
 support_uri = "https://support.example.test/wdac-review?source=report&amp;kind=request"
-values = ["report value"] * 17
-values[11] = support_uri
-values[12] = "Open Support Portal"
+values = ["report value"] * 16
+values[7] = "Explain why this application &amp; its access are needed."
+values[8] = support_uri
+values[9] = "Open Support Portal"
 report_html = report_template.format(*values)
+assert "<li>Explain why this application & its access are needed.</li>" not in report_html
+assert "<li>Explain why this application &amp; its access are needed.</li>" in report_html
 
 class ReportLinkParser(HTMLParser):
     def __init__(self):
@@ -457,7 +464,7 @@ required_report_keys = {
     "ReportActivityId", "ReportProvider", "ReportRecordId", "ReportExactErrorHeading",
     "ReportCopyHint", "ReportCopyButton", "ReportCopySuccess", "ReportCopyFailure",
     "ReportSupportInstructions", "ReportSupportStepOne", "ReportSupportStepTwo",
-    "ReportOpenSupport", "ReportRawEventHeading",
+    "ReportSupportStepThree", "ReportOpenSupport",
 }
 language_key_sets = [{node.get("name") for node in language.findall("string")} for language in localization_root.findall("language")]
 assert language_key_sets and all(keys == language_key_sets[0] for keys in language_key_sets)
@@ -467,7 +474,7 @@ localized_report_keys = {
     "ReportTitle", "ReportExplanation", "ReportExactErrorHeading", "ReportCopyHint",
     "ReportCopyButton", "ReportCopySuccess", "ReportCopyFailure", "ReportSupportHeading",
     "ReportSupportInstructions", "ReportSupportStepOne", "ReportSupportStepTwo",
-    "ReportOpenSupport", "ReportRawEventHeading",
+    "ReportSupportStepThree", "ReportOpenSupport",
 }
 localized_values = {
     language.get("tag"): {node.get("name"): (node.text or "").strip() for node in language.findall("string")}
@@ -476,5 +483,7 @@ localized_values = {
 for tag, strings in localized_values.items():
     if tag != "en":
         assert all(strings[key] != localized_values["en"][key] for key in localized_report_keys), f"{tag} has English report UI"
+assert "ReportSupportStepThree" in required_strings and "ReportRawEventHeading" not in required_strings
+assert "'ReportSupportStepThree'" in collector and "'ReportRawEventHeading'" not in collector
 assert "local review page" in readme.lower() and "company-wdac-review" in readme
 assert "older than two months" in readme and "sensitive" in readme.lower()
