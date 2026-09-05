@@ -412,6 +412,9 @@ assert 'role="status"' in review_body and 'aria-live="polite"' in review_body
 assert '<button class="button" id="copy-details" type="button">' in review_body
 assert "(& $Encode $SupportUri)" in review_body
 assert "ReportExactErrorHeading" in review_body and "ReportCopyButton" in review_body
+assert "$ErrorHeading = $Strings.ReportExactErrorHeading -f $BlockedFileName" in review_body
+assert "(& $Encode $ErrorHeading)" in review_body
+assert "$BlockedFileName = $Strings.UnknownFile" in review_body
 assert all(key in review_body for key in ("ReportSupportStepOne", "ReportSupportStepTwo", "ReportSupportStepThree"))
 for value in ("$Strings.ReportCopySuccess", "$Strings.ReportCopyFailure", "$Strings.ReportSupportStepOne", "$Strings.ReportSupportStepTwo", "$Strings.ReportSupportStepThree"):
     assert f"(& $Encode {value})" in review_body
@@ -425,9 +428,12 @@ values = ["report value"] * 16
 values[7] = "Explain why this application &amp; its access are needed."
 values[8] = support_uri
 values[9] = "Open Support Portal"
+values[10] = "Blocked Application Details: blocked&lt;app&gt;&amp;.exe"
 report_html = report_template.format(*values)
 assert "<li>Explain why this application & its access are needed.</li>" not in report_html
 assert "<li>Explain why this application &amp; its access are needed.</li>" in report_html
+assert "<h2>Blocked Application Details: blocked&lt;app&gt;&amp;.exe</h2>" in report_html
+assert 'aria-label="Blocked Application Details: blocked&lt;app&gt;&amp;.exe"' in report_html
 
 class ReportLinkParser(HTMLParser):
     def __init__(self):
@@ -481,6 +487,7 @@ localized_values = {
     for language in localization_root.findall("language")
 }
 for tag, strings in localized_values.items():
+    assert strings["ReportExactErrorHeading"].count("{0}") == 1, f"{tag} report heading must contain exactly one {{0}} placeholder"
     if tag != "en":
         assert all(strings[key] != localized_values["en"][key] for key in localized_report_keys), f"{tag} has English report UI"
 assert "ReportSupportStepThree" in required_strings and "ReportRawEventHeading" not in required_strings

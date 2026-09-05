@@ -1057,6 +1057,14 @@ function New-WdacReviewPage {
         $Strings.ReportRecordId = $Result.EventRecordId
     }
     $ErrorText = foreach ($Entry in $Rows.GetEnumerator()) { '{0}: {1}' -f $Entry.Key, $(if ([string]::IsNullOrWhiteSpace([string]$Entry.Value)) { $Strings.NotProvided } else { [string]$Entry.Value }) }
+    $BlockedFileName = [string]$Result.FileName
+    if ([string]::IsNullOrWhiteSpace($BlockedFileName) -and -not [string]::IsNullOrWhiteSpace([string]$Result.FilePath)) {
+        $BlockedFileName = [string]$Result.FilePath -replace '^.*[\\/]', ''
+    }
+    if ([string]::IsNullOrWhiteSpace($BlockedFileName)) {
+        $BlockedFileName = $Strings.UnknownFile
+    }
+    $ErrorHeading = $Strings.ReportExactErrorHeading -f $BlockedFileName
     $Nonce = [guid]::NewGuid().ToString('N')
     $FileName = 'review-{0}-{1}.html' -f ([long]$Result.EventRecordId), $Nonce
     $Path = Join-Path $ReviewDirectory $FileName
@@ -1071,7 +1079,7 @@ function New-WdacReviewPage {
         (& $Encode $Strings.ReportSupportHeading), (& $Encode $Strings.ReportSupportInstructions),
         (& $Encode $Strings.ReportSupportStepOne), (& $Encode $Strings.ReportSupportStepTwo),
         (& $Encode $Strings.ReportSupportStepThree), (& $Encode $SupportUri), (& $Encode $Strings.ReportOpenSupport),
-        (& $Encode $Strings.ReportExactErrorHeading), (& $Encode $Strings.ReportCopyHint), (& $Encode $Strings.ReportCopyButton),
+        (& $Encode $ErrorHeading), (& $Encode $Strings.ReportCopyHint), (& $Encode $Strings.ReportCopyButton),
         (& $Encode ($ErrorText -join [Environment]::NewLine)), (& $Encode $Strings.ReportCopySuccess),
         (& $Encode $Strings.ReportCopyFailure)
     Set-Content -LiteralPath $Path -Value $Html -Encoding UTF8
